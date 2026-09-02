@@ -1,104 +1,66 @@
 # loracord
 
-A bidirectional Meshtastic ↔ Discord bridge over MQTT, written in Node.js and designed for Docker deployment.
+A bridge between your Meshtastic mesh and a Discord server. Messages sent on the
+mesh appear in Discord, and messages typed in Discord go back out over the mesh.
 
-**What it does:**
-- Forwards incoming Meshtastic text messages to mapped Discord channels
-- Sends messages typed in those Discord channels back out over the mesh via MQTT downlink
-- Announces nodes newly heard on the mesh in the relevant channel (can be suppressed)
-- Lists recently heard nodes on demand with a `/nodes` slash command
-- Reports bridge, MQTT and gateway health with `/status`
-- Reports position, signal, battery and environment readings for any node with `/node`
+It also announces nodes as they turn up, and adds three slash commands for
+seeing what's on the air: `/nodes`, `/status` and `/node`.
 
----
+## What you need
 
-## Prerequisites
-
-- Docker + Docker Compose
-- A Meshtastic node connected to your local MQTT broker (Mosquitto or similar) with **JSON mode enabled**
-- A Discord bot token (see below)
-- Your MQTT broker reachable from the host running this container
+- **Docker** and Docker Compose on a machine that stays on
+- **An MQTT broker** on your network (Mosquitto is the usual choice)
+- **A Meshtastic node** connected to that broker, which will be your gateway
+- **A Discord server** you can add a bot to
 
 ---
 
-## 1. Meshtastic Node Setup
+## 1. Set up your Meshtastic node
 
-Before the bot will work, your gateway node needs configuring in the Meshtastic app:
+In the Meshtastic app, on the node you want to act as the gateway:
 
-**MQTT Module** (Settings → Module Config → MQTT):
-- Enabled: ✅
-- MQTT Server Address: your broker's LAN IP (e.g. `192.168.1.10`)
-- JSON Enabled: ✅ ← **critical for this bridge**
-- Encryption Enabled: leave off if using a private broker (simpler)
+**Settings → Module Config → MQTT**
 
-**Channels** (Settings → Channels):
-- On each channel you want to bridge, enable **Uplink** ✅
-- Create a channel named exactly `mqtt` and enable **Downlink** ✅ on it
-  - The PSK for the `mqtt` channel can be set to anything — it doesn't matter
-  - Reboot the node after creating this channel
+- Enabled ✅
+- MQTT Server Address: your broker's LAN IP, e.g. `192.168.1.10`
+- **JSON Enabled ✅** — the bridge won't see anything without this
+- Encryption Enabled: leave off if the broker is your own
 
-**Gateway Node ID — you probably don't need to set this:**
+**Settings → Channels**
 
-The bridge learns your gateway's node ID by itself. Every JSON packet your node
-uplinks is published under a topic ending in that node's ID
-(`msh/EU_868/2/json/LongFast/!a1b2c3d4`), so the first packet to arrive tells
-the bridge what it needs, and it logs what it found:
-
-```
-[MQTT] Discovered gateway node ID: !a1b2c3d4 (2712847316)
-```
-
-Set `GATEWAY_NODE_ID` explicitly only if your broker carries traffic from more
-than one gateway and you need to pin a specific one. When you do, paste the ID
-exactly as the Meshtastic app shows it on the node info screen:
-
-```env
-GATEWAY_NODE_ID=!a1b2c3d4
-```
-
-Plain decimal (`2712847316`) and `0xa1b2c3d4` are also accepted. An all-digit
-value is read as decimal, so use the `!` or `0x` prefix if you mean hex.
-
-> **Why is the `mqtt` channel needed — and does that mean everything goes out on it?**
-> No. The node builds its MQTT subscriptions from your channel names, so a
-> channel named exactly `mqtt` with downlink enabled is what makes it listen on
-> `msh/REGION/2/json/mqtt/`. That topic is only the doorway for instructions;
-> nothing is ever transmitted *on* the `mqtt` channel. Which channel the node
-> actually broadcasts on is set by the `channel` index in the downlink envelope,
-> so a message typed in the Discord channel mapped to `LongFast` goes out on
-> LongFast, and one typed in the `Private` channel goes out on Private. See
-> [Channel indices](#channel-indices) for how the bridge works those out.
+- Turn on **Uplink** for each channel you want bridged into Discord
+- Add a channel named exactly `mqtt` and turn on **Downlink** for it. The PSK can
+  be anything. This is what lets Discord messages reach the mesh — nothing is
+  ever sent on the `mqtt` channel itself.
+- Reboot the node once you've added it
 
 ---
 
-## 2. Discord Bot Setup
+## 2. Create the Discord bot
 
 1. Go to [discord.com/developers/applications](https://discord.com/developers/applications)
-2. Click **New Application** → give it a name (e.g. `Loracord`)
-3. Go to **Bot** → click **Add Bot**
-4. Under **Privileged Gateway Intents**, enable:
-   - **Message Content Intent** ← required to read channel messages
-5. Copy the **Token** — this is your `DISCORD_TOKEN`
-6. Go to **OAuth2 → URL Generator**:
-   - Scopes: `bot`, `applications.commands` ← the second one is needed for `/nodes`
-   - Bot Permissions: `Send Messages`, `Read Messages/View Channels`, `Read Message History`
-7. Copy the generated URL, open it in a browser, and invite the bot to your server
+   and click **New Application** — call it whatever you like
+2. Open **Bot**, click **Add Bot**, and enable **Message Content Intent** under
+   Privileged Gateway Intents
+3. Copy the **Token** — you'll need it in a moment, and it won't be shown again
+4. Open **OAuth2 → URL Generator** and tick:
+   - Scopes: `bot` and `applications.commands`
+   - Permissions: `Send Messages`, `Read Messages/View Channels`, `Read Message History`
+5. Open the URL it generates and invite the bot to your server
 
-**Getting Discord Channel IDs:**
-- In Discord, go to User Settings → Advanced → enable **Developer Mode**
-- Right-click any channel → **Copy Channel ID**
+You'll also need the ID of each Discord channel you want to bridge. Enable
+**User Settings → Advanced → Developer Mode**, then right-click a channel and
+choose **Copy Channel ID**.
 
 ---
 
-## 3. Configuration
-
-Copy the example env file:
+## 3. Configure
 
 ```bash
 cp .env.example .env
 ```
 
-Edit `.env`:
+Then fill in `.env`:
 
 ```env
 DISCORD_TOKEN=your-bot-token
@@ -106,140 +68,56 @@ DISCORD_TOKEN=your-bot-token
 MQTT_HOST=192.168.1.10
 MQTT_PORT=1883
 
-MQTT_ROOT_TOPIC=msh/EU_868          # match your node's region setting
-# GATEWAY_NODE_ID=!a1b2c3d4        # optional — auto-discovered if omitted
+# Must match your node's region
+MQTT_ROOT_TOPIC=msh/EU_868
 
-# Map mesh channel names to Discord channel IDs (comma-separated)
+# Which mesh channel goes to which Discord channel
+CHANNEL_MAP=LongFast:1234567890123456789
+```
+
+`CHANNEL_MAP` pairs a Meshtastic channel name with a Discord channel ID, and
+takes a comma-separated list if you're bridging more than one:
+
+```env
 CHANNEL_MAP=LongFast:1234567890123456789,Private:9876543210987654321
 ```
 
-**`CHANNEL_MAP` format:**
-
-```
-MeshtasticChannelName:DiscordChannelId
-MeshtasticChannelName:ChannelIndex:DiscordChannelId    # index pinned
-```
-
-Multiple channels separated by commas. The Meshtastic channel name must match **exactly** (case-sensitive) what appears in the Meshtastic app.
-
-### Channel indices
-
-Downlink envelopes address channels by their **slot number** on the node (0–7,
-where 0 is the primary channel), not by name — so to send a Discord message out
-on the right mesh channel, the bridge needs to know which slot that channel sits
-in.
-
-It works this out on its own. Every JSON packet carries the index alongside the
-channel name in its topic, so the first packet seen on a channel is enough:
-
-```
-[MQTT] Discovered channel index for "Private": 2
-```
-
-Until a channel has been seen, Discord → mesh sends on it are **refused** rather
-than guessed at, since falling back to slot 0 would put a message meant for a
-private channel out on the primary one. If you'd rather not wait for that first
-packet — or the channel is quiet enough that it may be a while — pin the index
-in `CHANNEL_MAP` by slotting it between the name and the Discord channel ID:
-
-```env
-CHANNEL_MAP=LongFast:0:1234567890123456789,Private:2:9876543210987654321
-```
-
-The channel's index is its position in the Meshtastic app's channel list,
-counting from 0 at the top. A pinned index always wins over discovery.
+The channel name must match what's in the Meshtastic app **exactly**, including
+capitals. Everything else has a sensible default — see the
+[reference](docs/REFERENCE.md#environment-variables) if you want to change it.
 
 ---
 
-## 4. Running with Docker Compose
+## 4. Run it
 
 ```bash
-# Build and start
-docker compose up -d
-
-# View logs
-docker compose logs -f
-
-# Stop
-docker compose down
+docker compose up -d      # start
+docker compose logs -f    # watch it work
+docker compose down       # stop
 ```
 
-The container will restart automatically on failure or reboot (`restart: unless-stopped`).
+It restarts on its own after a crash or a reboot.
+
+Give it a minute or two after starting. The bridge picks up which node is your
+gateway, and which slot each channel sits in, from the first packets that come
+in — until it has seen them, Discord messages won't be sent out to the mesh.
+Run `/status` to see whether it's ready.
 
 ---
 
-## 5. How It Works
+## Using it
 
-### Mesh → Discord
+Messages coming off the mesh appear in the mapped channel:
 
-When a text message arrives on the mesh via MQTT, the bridge:
+```
+✉️ MDYS · Matt's Base: heading up the hill
+```
 
-1. Parses the JSON packet from the topic `msh/REGION/2/json/CHANNELNAME/!nodeId`:
-   ```json
-   { "from": 2712847316, "channel": 0, "type": "text", "payload": { "text": "message text" } }
-   ```
-   Note the asymmetry with the downlink below: uplinked text is **wrapped in an
-   object**, never a bare string. And if the message body itself happens to parse
-   as JSON, the firmware publishes that value in place of the wrapper — so a mesh
-   user typing `42` or `{"a":1}` yields a `payload` that is a number or an object.
-   The bridge unwraps all three shapes.
-2. Looks up the sender's short name and long name from its node cache
-3. Posts to the mapped Discord channel as: `✉️ **SHRT · Long Name**: message text`
+Anything you type in that channel goes out over the mesh (keep it under 220
+characters — longer messages get cut off). New nodes get a 🟢 notice when
+they're first heard.
 
-Nodes are usually seen via a position or telemetry packet before their `nodeinfo`
-arrives, and those carry no names — until one does, a node is shown by the hex ID
-Meshtastic displays (`!a1b2c3d4`) rather than a name.
-
-Only text messages are posted to Discord, but every packet type is read for what
-it says about its sender, and the result is what `/node` reports:
-
-| Packet | Recorded |
-|---|---|
-| any | signal quality (`snr`, `rssi`) and hop count, when the packet carried them |
-| `nodeinfo` | long and short names, hardware model, node role |
-| `position` | latitude, longitude and altitude |
-| `telemetry` | battery, voltage, channel utilisation, air utilisation, node uptime — and separately temperature, humidity and pressure |
-
-Device and environment telemetry are kept apart, because a node sending both
-would otherwise have each reading blanked by the other's packet. Position is
-replaced whole rather than merged, so a node that moves can't be left carrying
-the altitude it had two hilltops ago.
-
-The first time a node is heard from, it's announced inline as:
-`🟢 **SHRT · Long Name** is now on the mesh`
-
-The exception is a node first heard via a text message: its message is bridged
-into the channel as normal and the node is cached like any other, but no notice
-is posted — the message itself is already proof the node is there, so a notice
-directly above it would add nothing.
-
-On a busy mesh these can outnumber the actual conversation, and the cache is
-empty on startup so a restart re-announces everything. Set
-`SUPPRESS_NODE_EVENTS=true` to drop them and bridge only real messages. The node
-cache still tracks everything either way, so `/nodes` keeps working as normal.
-
-### Discord → Mesh
-
-When a message is sent in a mapped Discord channel:
-
-1. The bot picks it up (messages from other bots are ignored)
-2. Looks up which mesh channel that Discord channel maps to, and that channel's index
-3. Publishes a JSON downlink to `msh/REGION/2/json/mqtt/`:
-   ```json
-   { "from": 2712847316, "channel": 2, "type": "sendtext", "payload": "your message" }
-   ```
-4. Your gateway node receives it and broadcasts over LoRa on channel index 2
-
-Messages longer than 220 characters are truncated (Meshtastic's protocol limit is ~228 bytes).
-
-Set `CONFIRM_SENDS=true` to have the bot echo each bridged message back into the
-Discord channel as `✅ Sent to mesh: your message`. The echo is the text *as sent*,
-so a message that was truncated to fit shows up truncated — which is the point of
-having it. Off by default, since it doubles the traffic in a busy channel.
-
-### Slash Commands
-
-**`/nodes`** — lists every node the bridge has heard from recently, most recent first:
+**`/nodes`** — everything heard from in the last hour, most recent first:
 
 ```
 📡 3 nodes heard in the last hour
@@ -248,271 +126,43 @@ having it. Off by default, since it doubles the traffic in a busy channel.
 !0c9a4d22  (no nodeinfo yet)     51m ago  ?
 ```
 
-The reply is ephemeral — only the person who ran it sees it, so it doesn't clutter
-a bridged channel. Long lists are split across several messages.
+**`/status`** — whether the bridge, MQTT and your own node are healthy, plus
+message counts since it started. This is the one to check when messages aren't
+getting through.
 
-Notes on reading the output:
+**`/node <name>`** — everything known about one node: where it is, how far away,
+signal, battery, temperature, uptime. Start typing and it will autocomplete.
 
-- The list is whatever the in-memory node cache holds, so it **empties on restart**
-  and drops nodes once they go `NODE_CACHE_TTL_MS` (1 hour by default) without being
-  heard from. It's "recently heard", not the node's full NodeDB.
-- Nodes that have only sent position or telemetry packets show as `(no nodeinfo yet)`
-  — the bridge knows they exist but hasn't been told their name.
-- The hop column comes from `hops_away` on the uplinked packet. `direct` means the
-  gateway heard the node itself; `?` means that packet carried no hop count.
-
-**`/status`** — how the bridge, its MQTT link and your own node are doing:
-
-```
-📊 loracord status
-Uptime   3h 12m
-MQTT     connected · 192.168.1.10:1883
-Topic    msh/EU_868/2/json/#
-Gateway  !a1b2c3d4 (discovered)
-Dedupe   5m window
-
-Traffic since startup
-Packets seen        1204
-Duplicates dropped   143
-Mesh to Discord       87
-Discord to mesh       12
-Sends refused          0
-
-Channels
-LongFast → #meshtastic · index 0 (discovered)
-Private  → #mesh-private · ⚠️ index not known yet
-
-This node — MDYS · Matt's Base
-Battery      mains powered (4.12 V)
-Air util TX  3.2%
-Chan util    11.4%
-Node uptime  2d 4h
-Heard        2m ago
-```
-
-This is the command to reach for when messages aren't getting through. The two
-rows that usually explain it:
-
-- **Gateway** — `not known yet` means no uplink has arrived, so Discord → mesh
-  sends are still being refused.
-- **Channels** — a channel marked `⚠️ index not known yet` can receive from the
-  mesh but can't transmit to it yet, because the bridge hasn't seen a packet on
-  that channel to learn its slot number. Pin it in `CHANNEL_MAP` to skip the wait.
-
-**`This node`** comes from your own gateway's telemetry, so it appears once the
-node has reported in on its own telemetry interval — a few minutes after a cold
-start. `Air util TX` is the node's own measure of how much of the last hour it
-spent transmitting, which is the figure that matters against the 10% duty cycle
-EU 868 allows.
-
-**`/node <key>`** — everything the bridge knows about one node:
-
-```
-📡 HILL · Hilltop Relay
-Node ID      !7f3e0011 (2134573073)
-Hardware     HELTEC_V3 · CLIENT
-Last heard   4m ago
-Hops         2 hops
-Signal       SNR 6.25 dB · RSSI -94 dBm
-Position     53.48095, -2.23743 · 187 m (12m ago)
-Distance     2.4 km NE of this gateway
-Battery      64% (3.87 V)
-Air util TX  1.1%
-Chan util    9.8%
-Environment  18.4 °C · 61% RH · 1013.2 hPa
-Node uptime  9h 42m
-```
-
-The key can be a node ID (`!7f3e0011`, `0x7f3e0011` or a plain decimal), an exact
-short name (`HILL`), or part of a long name or hex ID (`hillt`, `3e00`). Those are
-tried in that order and the first that matches wins, so an exact short name is
-never buried under loose substring hits. Autocomplete offers the nodes currently
-in the cache as you type, and picking one resolves to its ID exactly.
-
-Several matches get listed to choose from rather than the bridge guessing; none
-gets a plain "nothing matching that" reply.
-
-Every row is omitted when the bridge has no reading for it, so the reply only ever
-states things actually heard over the air. A node that has sent nothing but a
-position packet shows little more than its ID and when it was last heard — the
-rest arrives as it sends `nodeinfo` and telemetry. `Distance` needs a position
-from both that node and your gateway, and a map link is appended whenever the
-node's own position is known.
-
-Commands are registered per-server on startup, in each server holding a channel from
-`CHANNEL_MAP`, which makes them available immediately. If the log shows a registration
-failure, the bot was almost certainly invited before `applications.commands` was added
-to its OAuth2 scopes — re-invite it with that scope (step 6 above) and restart.
-
-### Duplicate Suppression
-
-The bridge subscribes to `msh/REGION/2/json/#`, which covers **every** gateway
-publishing under that root, not just yours. That's deliberate — it's what lets
-the gateway node ID be discovered rather than configured — but it means a mesh
-packet that two gateways both heard gets uplinked twice, arriving as two
-identical JSON messages on two different topics.
-
-Left alone, each copy would post to Discord separately and overwrite the
-sender's cached hop count with the path through whichever gateway happened to
-arrive last. So each packet is remembered by its sender and packet ID
-(`from` + `id`, unique per transmission) for `DEDUPE_WINDOW_MS` — 5 minutes by
-default — and later copies are dropped before anything is posted or cached.
-
-Channel-index and gateway-ID discovery run *before* the check, since a
-duplicate's topic identifies its channel just as well as the first copy's.
-
-Packets carrying no usable ID are always treated as new: bridging an occasional
-duplicate beats silently swallowing a real message. If you're on a
-single-gateway broker and want the check gone entirely, set `DEDUPE_WINDOW_MS=0`
-— the startup log says which mode is active.
-
-### Echo Prevention
-
-The bridge never bridges or announces packets where `from` matches the gateway node ID — whether that was configured via `GATEWAY_NODE_ID` or discovered from the topic. This prevents messages the node rebroadcasts from being echo-posted back to Discord.
-
-Those packets are still *recorded*, though: your gateway's own telemetry is where
-`/status` gets this node's battery and airtime figures, and it appears in `/nodes`
-and `/node` like any other node. What's suppressed is posting, not listening.
-
-Until the ID is known (i.e. before the first uplink arrives on a fresh start with `GATEWAY_NODE_ID` unset), Discord → mesh sends are refused with a warning, since the downlink envelope needs it.
+Replies to these are only visible to you, so they don't clutter the channel.
 
 ---
 
-## 6. Logging
+## Something's not working
 
-Logging uses [pino](https://getpino.io). Every line is tagged with the component
-that emitted it (`Bridge`, `MQTT`, `Discord`).
+Run **`/status`** first — most problems show up there:
 
-Set `LOG_LEVEL` in your `.env` to control verbosity:
+- **Gateway `not known yet`** — no packets have arrived from your node. Check
+  MQTT is enabled on it, with JSON on.
+- **A channel marked `⚠️ index not known yet`** — the bridge can receive on that
+  channel but can't send to it yet, because nothing has come in on it. Wait for
+  traffic, or [pin the index](docs/REFERENCE.md#channel-indices).
 
-| Level | Description |
-|-------|-------------|
-| `trace` | Everything, including pino internals |
-| `debug` | Every packet seen, publish confirmations |
-| `info` | Startup, connections, every bridged message (default) |
-| `warn` | Reconnections, skipped messages |
-| `error` | Failures only |
-| `silent` | No output |
+Then check `docker compose logs -f`. Common causes:
 
-```env
-LOG_LEVEL=debug
-```
+| Symptom | Usual cause |
+|---|---|
+| Nothing arrives from the mesh | JSON or Uplink not enabled on the node, or a typo in the channel name |
+| Discord messages don't reach the mesh | No `mqtt` channel with Downlink on the node, or it wasn't rebooted after adding it |
+| Nodes show as `!a1b2c3d4` | Their name hasn't been broadcast yet — wait a few minutes |
+| Bot ignores messages | Message Content Intent is off in the developer portal |
+| Slash commands missing | Bot was invited without `applications.commands` — re-invite and restart |
 
-An unrecognised value falls back to `info`.
-
-### Output format
-
-Under Docker (`NODE_ENV=production`) each line is a JSON record, ready for
-`docker compose logs`, Loki, or anything else that ingests structured logs:
-
-```json
-{"level":30,"time":1730000000000,"component":"MQTT","msg":"Connected"}
-```
-
-Running locally with dev dependencies installed, output is colourised and
-human-readable via `pino-pretty`:
-
-```
-[2026-01-01 12:00:00] INFO: [MQTT] Connected
-```
-
-To pretty-print production JSON on the fly:
-
-```bash
-docker compose logs -f | npx pino-pretty
-```
+More detail in [Troubleshooting](docs/REFERENCE.md#troubleshooting).
 
 ---
 
-## 7. Troubleshooting
+## Going deeper
 
-**No messages appearing in Discord from the mesh:**
-- Check `docker compose logs -f` — are MQTT messages being received?
-- Confirm the Meshtastic channel name in `CHANNEL_MAP` matches exactly (check casing)
-- Ensure JSON is enabled on the node's MQTT module
-- Ensure Uplink is enabled on the channel
-
-**Messages sent in Discord aren't reaching the mesh:**
-- Confirm the node has a channel named exactly `mqtt` with Downlink enabled
-- The node must have been rebooted after creating that channel
-- Check logs for `Cannot send — channel index for "X" not known yet` — nothing has been seen on that channel yet, so pin its index in `CHANNEL_MAP` (see [Channel indices](#channel-indices))
-- Check logs for `[MQTT] Published to mesh` — if it's there, the publish succeeded; the issue is node-side
-
-**Messages from Discord arrive on the wrong mesh channel:**
-- The index the bridge discovered doesn't match the node's actual slot for that channel
-- Pin the correct one in `CHANNEL_MAP` as `MeshChannel:Index:DiscordChannelId` — counting from 0 at the top of the app's channel list
-
-**Node names showing as `!a1b2c3d4` instead of real names:**
-- The bridge caches node names from `nodeinfo` packets, which nodes broadcast periodically
-- Wait a few minutes for nodes to announce themselves, or trigger a node info broadcast from the app
-- Node cache TTL is 1 hour by default; set `NODE_CACHE_TTL_MS` to adjust
-
-**Discord bot not responding to messages:**
-- Ensure the **Message Content Intent** is enabled in the Discord developer portal
-- Confirm the bot has been invited with the correct permissions
-
----
-
-## Architecture
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│  Docker Container                                           │
-│                                                             │
-│  ┌──────────────┐      ┌──────────────┐                    │
-│  │  mqttClient  │      │discordClient │                    │
-│  │              │      │              │                    │
-│  │ subscribe:   │      │ listen:      │                    │
-│  │ msh/+/2/     │      │ mapped       │                    │
-│  │ json/#       │      │ channels     │                    │
-│  └──────┬───────┘      └──────┬───────┘                    │
-│         │                     │                            │
-│         │                     │                            │
-│  ┌──────▼───────┐             │                            │
-│  │ packetDedupe │             │  (drop copies of a packet  │
-│  │              │             │   other gateways uplinked) │
-│  └──────┬───────┘             │                            │
-│         │                     │                            │
-│         └─────────┬───────────┘                            │
-│                   │                                        │
-│            ┌──────▼──────┐                                 │
-│            │   index.js  │  (bridge + routing logic)       │
-│            └──────┬──────┘                                 │
-│                   │                                        │
-│            ┌──────▼──────┐                                 │
-│            │  nodeCache  │  (node ID → names, last seen,   │
-│            │             │   hops, signal, position,       │
-│            │             │   telemetry)                    │
-│            └─────────────┘                                 │
-└─────────────────────────────────────────────────────────────┘
-         │                              │
-   ┌─────▼──────┐                ┌──────▼──────┐
-   │   MQTT     │                │   Discord   │
-   │   Broker   │                │     API     │
-   └─────┬──────┘                └─────────────┘
-         │
-   ┌─────▼──────┐
-   │Meshtastic  │
-   │  Node      │
-   └────────────┘
-```
-
----
-
-## Environment Variables Reference
-
-| Variable | Required | Default | Description |
-|---|---|---|---|
-| `DISCORD_TOKEN` | ✅ | — | Discord bot token |
-| `MQTT_HOST` | ✅ | — | MQTT broker hostname or IP |
-| `MQTT_PORT` | | `1883` | MQTT broker port |
-| `MQTT_USERNAME` | | — | MQTT auth username |
-| `MQTT_PASSWORD` | | — | MQTT auth password |
-| `MQTT_ROOT_TOPIC` | | `msh/EU_868` | Meshtastic root topic |
-| `GATEWAY_NODE_ID` | | auto-discovered | Gateway node ID as hex (`!a1b2c3d4`) or decimal, for echo prevention + downlink |
-| `CHANNEL_MAP` | ✅ | — | `MeshChannel:DiscordChannelId,...`, or `MeshChannel:ChannelIndex:DiscordChannelId,...` to pin indices |
-| `CONFIRM_SENDS` | | `false` | Echo each bridged message back into Discord, showing what actually reached the mesh |
-| `SUPPRESS_NODE_EVENTS` | | `false` | Don't post the 🟢 notice when a node is first heard |
-| `NODE_CACHE_TTL_MS` | | `3600000` | Node info cache TTL (ms) |
-| `DEDUPE_WINDOW_MS` | | `300000` | How long a packet ID is remembered to recognise copies uplinked by other gateways; `0` disables |
-| `LOG_LEVEL` | | `info` | `trace`, `debug`, `info`, `warn`, `error`, `fatal`, or `silent` |
+[**docs/REFERENCE.md**](docs/REFERENCE.md) covers how the bridge works packet by
+packet, all environment variables, channel indices, duplicate handling, logging
+and the architecture.
