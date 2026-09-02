@@ -10,11 +10,11 @@ COPY package.json ./
 RUN npm install --omit=dev && npm cache clean --force
 
 # Copy source
-COPY src/ ./src/
+COPY *.js ./
 
 # Drop to non-root
 USER loracord
 
 ENV NODE_ENV=production
 
-CMD ["node", "src/index.js"]
+CMD ["node", "index.js"]

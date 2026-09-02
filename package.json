@@ -2,10 +2,10 @@
   "name": "loracord",
   "version": "1.0.0",
   "description": "Bidirectional Meshtastic ↔ Discord bridge over MQTT",
-  "main": "src/index.js",
+  "main": "index.js",
   "scripts": {
-    "start": "node src/index.js",
-    "dev": "node --watch src/index.js"
+    "start": "node index.js",
+    "dev": "node --watch index.js"
   },
   "dependencies": {
     "discord.js": "^14.16.3",
