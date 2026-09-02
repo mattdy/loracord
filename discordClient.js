@@ -13,6 +13,16 @@ const log = require('./logger').child({ component: 'Discord' });
 
 let discordClient = null;
 
+/**
+ * Never ping anyone, whatever the text says.
+ *
+ * Names and message bodies both come off the mesh, where anyone within radio
+ * range picks their own. Escaping stops them rendering as a mention; this
+ * stops them notifying anyone even if an escape is ever missed. Channel links
+ * the bridge writes itself still render — they were never pings to begin with.
+ */
+const NO_MENTIONS = { parse: [] };
+
 // Callbacks registered by the bridge
 let onDiscordMessage = null;
 let onNodesCommand = null;
@@ -173,9 +183,17 @@ async function handleInteraction(interaction) {
     const messages = (await handler(interaction)) || [];
     if (!messages.length) return;
 
-    await interaction.reply({ content: messages[0], flags: MessageFlags.Ephemeral });
+    await interaction.reply({
+      content: messages[0],
+      flags: MessageFlags.Ephemeral,
+      allowedMentions: NO_MENTIONS,
+    });
     for (const followUp of messages.slice(1)) {
-      await interaction.followUp({ content: followUp, flags: MessageFlags.Ephemeral });
+      await interaction.followUp({
+        content: followUp,
+        flags: MessageFlags.Ephemeral,
+        allowedMentions: NO_MENTIONS,
+      });
     }
   } catch (err) {
     log.error({ err, command: interaction.commandName }, 'Failed to handle command');
@@ -230,7 +248,7 @@ async function sendToChannel(channelId, content) {
       log.warn({ channelId }, 'Channel not found or not text-based');
       return false;
     }
-    await channel.send(content);
+    await channel.send({ content, allowedMentions: NO_MENTIONS });
     return true;
   } catch (err) {
     log.error({ err, channelId }, 'Failed to send to channel');

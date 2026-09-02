@@ -1,5 +1,12 @@
 'use strict';
 
+const {
+  escapeMarkdown,
+  codeBlock: fence,
+  inlineCode,
+  channelMention,
+  hyperlink,
+} = require('discord.js');
 const config = require('./config');
 const nodeCache = require('./nodeCache');
 const nodeId = require('./nodeId');
@@ -108,7 +115,7 @@ function chunkIntoCodeBlocks(header, lines) {
 
   const flush = () => {
     if (!batch.length) return;
-    const block = '```\n' + batch.join('\n') + '\n```';
+    const block = fence(batch.join('\n'));
     messages.push(messages.length === 0 ? `${header}\n${block}` : block);
     batch = [];
   };
@@ -182,12 +189,24 @@ function sanitiseForCodeBlock(text) {
  * Escape Discord markdown special characters in user-provided text.
  * Prevents mesh messages containing * _ ` ~ from breaking Discord formatting.
  *
- * The replacement needs a doubled backslash: in a JavaScript string literal
- * "\$1" is an unrecognised escape that collapses to "$1", which would put each
- * character back unchanged and quietly escape nothing at all.
+ * discord.js gets right what a character class gets wrong: ~~ and || only mean
+ * anything doubled, so a lone ~ in a node name no longer picks up a stray
+ * backslash. Headings and lists are opt-in there and default to off, but a
+ * mesh message opening with "# " or "- " is exactly the surprise this exists
+ * to prevent, so they are switched on.
+ *
+ * Angle brackets stay ours to handle: discord.js never escapes them, and they
+ * are what turns a name chosen on the mesh into a mention or channel chip.
+ * Pings are separately defused by allowedMentions at the send boundary; this
+ * stops the chip rendering at all.
  */
 function escapeDiscordMarkdown(text) {
-  return text.replace(/([*_`~\|<>])/g, '\\$1');
+  const escaped = escapeMarkdown(text, {
+    heading: true,
+    bulletedList: true,
+    numberedList: true,
+  });
+  return escaped.replace(/[<>]/g, (char) => `\\${char}`);
 }
 
 // ─── /status ─────────────────────────────────────────────────────────────────
@@ -272,7 +291,7 @@ function describeChannel({ meshChannel, discordChannelId, index, pinned }) {
     index === null
       ? '⚠️ index not known yet'
       : `index ${index} (${pinned ? 'pinned' : 'discovered'})`;
-  return `\`${meshChannel}\` → <#${discordChannelId}> · ${slot}`;
+  return `${inlineCode(meshChannel)} → ${channelMention(discordChannelId)} · ${slot}`;
 }
 
 function ownNodeRows(entry) {
@@ -380,7 +399,7 @@ function renderRows(rows) {
 }
 
 function codeBlock(body) {
-  return body === null ? '' : '```\n' + body + '\n```';
+  return body === null ? '' : fence(body);
 }
 
 /**
@@ -496,7 +515,10 @@ function formatDistance(metres) {
 function mapLink({ latitude, longitude }) {
   const lat = latitude.toFixed(5);
   const lon = longitude.toFixed(5);
-  return `[Show on map](https://www.openstreetmap.org/?mlat=${lat}&mlon=${lon}#map=13/${lat}/${lon})`;
+  return hyperlink(
+    'Show on map',
+    `https://www.openstreetmap.org/?mlat=${lat}&mlon=${lon}#map=13/${lat}/${lon}`
+  );
 }
 
 module.exports = {
