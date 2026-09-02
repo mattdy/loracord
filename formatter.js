@@ -5,13 +5,13 @@ const nodeCache = require('./nodeCache');
 /**
  * Format an inbound Meshtastic text message for Discord.
  *
- * Output: "**SHRT · Long Name**: message text"
+ * Output: "✉️ **SHRT · Long Name**: message text"
  */
 function meshMessageToDiscord({ fromId, text }) {
   const displayName = nodeCache.getDisplayName(fromId);
   // Escape Discord markdown in the message body to prevent formatting surprises
   const safeText = escapeDiscordMarkdown(text);
-  return `**${displayName}**: ${safeText}`;
+  return `✉️ **${displayName}**: ${safeText}`;
 }
 
 /**

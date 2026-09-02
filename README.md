@@ -181,7 +181,7 @@ When a text message arrives on the mesh via MQTT, the bridge:
    user typing `42` or `{"a":1}` yields a `payload` that is a number or an object.
    The bridge unwraps all three shapes.
 2. Looks up the sender's short name and long name from its node cache
-3. Posts to the mapped Discord channel as: `**SHRT · Long Name**: message text`
+3. Posts to the mapped Discord channel as: `✉️ **SHRT · Long Name**: message text`
 
 Nodes are usually seen via a position or telemetry packet before their `nodeinfo`
 arrives, and those carry no names — until one does, a node is shown by the hex ID
