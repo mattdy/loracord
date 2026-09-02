@@ -16,22 +16,54 @@ let discordClient = null;
 // Callbacks registered by the bridge
 let onDiscordMessage = null;
 let onNodesCommand = null;
+let onStatusCommand = null;
+let onNodeCommand = null;
+let onNodeAutocomplete = null;
 
 const NODES_COMMAND = new SlashCommandBuilder()
   .setName('nodes')
   .setDescription('List the Meshtastic nodes heard on the mesh recently')
   .toJSON();
 
+const STATUS_COMMAND = new SlashCommandBuilder()
+  .setName('status')
+  .setDescription('Show how the bridge, its MQTT link and the gateway node are doing')
+  .toJSON();
+
+// The key is free text rather than a node picker because a mesh can hold more
+// nodes than Discord will show as choices, and people know their own by ID as
+// often as by name. Autocomplete narrows it as they type.
+const NODE_COMMAND = new SlashCommandBuilder()
+  .setName('node')
+  .setDescription('Show everything the bridge knows about one node')
+  .addStringOption((option) =>
+    option
+      .setName('key')
+      .setDescription('Node ID (!a1b2c3d4), short name, or part of a long name')
+      .setRequired(true)
+      .setAutocomplete(true)
+  )
+  .toJSON();
+
+const COMMANDS = [NODES_COMMAND, STATUS_COMMAND, NODE_COMMAND];
+
 /**
  * Connect to Discord and begin listening.
  *
  * @param {object} handlers
- * @param {function} handlers.onDiscordMessage - called with { discordChannelId, content, authorTag }
- * @param {function} handlers.onNodesCommand   - called with no arguments, returns string[] to reply with
+ * @param {function} handlers.onDiscordMessage  - called with { discordChannelId, content, authorTag }
+ * @param {function} handlers.onNodesCommand    - no arguments, returns string[] to reply with
+ * @param {function} handlers.onStatusCommand   - no arguments, returns string[] to reply with
+ * @param {function} handlers.onNodeCommand     - called with the typed key, returns string[]
+ * @param {function} handlers.onNodeAutocomplete - called with the partial key, returns
+ *   [{ name, value }] choices
  */
 async function connect(handlers) {
   onDiscordMessage = handlers.onDiscordMessage;
   onNodesCommand = handlers.onNodesCommand;
+  onStatusCommand = handlers.onStatusCommand;
+  onNodeCommand = handlers.onNodeCommand;
+  onNodeAutocomplete = handlers.onNodeAutocomplete;
 
   discordClient = new Client({
     intents: [
@@ -97,17 +129,28 @@ async function registerCommands(readyClient) {
   for (const guildId of guildIds) {
     try {
       const guild = await readyClient.guilds.fetch(guildId);
-      await guild.commands.set([NODES_COMMAND]);
-      log.info(`Registered /nodes in ${guild.name}`);
+      await guild.commands.set(COMMANDS);
+      log.info(`Registered ${COMMANDS.length} commands in ${guild.name}`);
     } catch (err) {
       log.error(
         { err, guildId },
-        'Failed to register /nodes — the bot most likely needs re-inviting with the ' +
+        'Failed to register commands — the bot most likely needs re-inviting with the ' +
         'applications.commands scope as well as bot'
       );
     }
   }
 }
+
+/**
+ * What each slash command does, keyed by name. Every one returns the messages
+ * to reply with, so the surrounding plumbing — ephemerality, splitting, error
+ * handling — is written once rather than per command.
+ */
+const COMMAND_HANDLERS = {
+  nodes: () => onNodesCommand?.(),
+  status: () => onStatusCommand?.(),
+  node: (interaction) => onNodeCommand?.(interaction.options.getString('key')),
+};
 
 /**
  * Handle a slash command invocation.
@@ -116,11 +159,18 @@ async function registerCommands(readyClient) {
  * it into a bridged channel would just be noise for everyone else.
  */
 async function handleInteraction(interaction) {
+  if (interaction.isAutocomplete()) {
+    await handleAutocomplete(interaction);
+    return;
+  }
+
   if (!interaction.isChatInputCommand()) return;
-  if (interaction.commandName !== 'nodes') return;
+
+  const handler = COMMAND_HANDLERS[interaction.commandName];
+  if (!handler) return;
 
   try {
-    const messages = (await onNodesCommand?.()) || [];
+    const messages = (await handler(interaction)) || [];
     if (!messages.length) return;
 
     await interaction.reply({ content: messages[0], flags: MessageFlags.Ephemeral });
@@ -128,14 +178,36 @@ async function handleInteraction(interaction) {
       await interaction.followUp({ content: followUp, flags: MessageFlags.Ephemeral });
     }
   } catch (err) {
-    log.error({ err }, 'Failed to handle /nodes');
+    log.error({ err, command: interaction.commandName }, 'Failed to handle command');
     // An interaction that never gets a reply shows the user a red "failed"
-    // banner with no explanation, so answer even when the listing broke.
+    // banner with no explanation, so answer even when the command broke.
     if (!interaction.replied && !interaction.deferred) {
       await interaction
-        .reply({ content: '⚠️ Could not read the node list.', flags: MessageFlags.Ephemeral })
+        .reply({
+          content: '⚠️ Something went wrong running that command.',
+          flags: MessageFlags.Ephemeral,
+        })
         .catch(() => {});
     }
+  }
+}
+
+/**
+ * Suggest nodes as someone types the /node key.
+ *
+ * Discord gives this three seconds and accepts at most 25 choices, and treats
+ * a failed response as a broken command — so a lookup that goes wrong answers
+ * with an empty list, leaving the typed text usable, rather than throwing.
+ */
+async function handleAutocomplete(interaction) {
+  if (interaction.commandName !== 'node') return;
+
+  try {
+    const choices = (await onNodeAutocomplete?.(interaction.options.getFocused())) || [];
+    await interaction.respond(choices.slice(0, 25));
+  } catch (err) {
+    log.debug({ err }, 'Autocomplete lookup failed');
+    await interaction.respond([]).catch(() => {});
   }
 }
 

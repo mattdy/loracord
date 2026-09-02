@@ -7,6 +7,8 @@ A bidirectional Meshtastic ↔ Discord bridge over MQTT, written in Node.js and 
 - Sends messages typed in those Discord channels back out over the mesh via MQTT downlink
 - Announces nodes newly heard on the mesh in the relevant channel (can be suppressed)
 - Lists recently heard nodes on demand with a `/nodes` slash command
+- Reports bridge, MQTT and gateway health with `/status`
+- Reports position, signal, battery and environment readings for any node with `/node`
 
 ---
 
@@ -188,6 +190,21 @@ Nodes are usually seen via a position or telemetry packet before their `nodeinfo
 arrives, and those carry no names — until one does, a node is shown by the hex ID
 Meshtastic displays (`!a1b2c3d4`) rather than a name.
 
+Only text messages are posted to Discord, but every packet type is read for what
+it says about its sender, and the result is what `/node` reports:
+
+| Packet | Recorded |
+|---|---|
+| any | signal quality (`snr`, `rssi`) and hop count, when the packet carried them |
+| `nodeinfo` | long and short names, hardware model, node role |
+| `position` | latitude, longitude and altitude |
+| `telemetry` | battery, voltage, channel utilisation, air utilisation, node uptime — and separately temperature, humidity and pressure |
+
+Device and environment telemetry are kept apart, because a node sending both
+would otherwise have each reading blanked by the other's packet. Position is
+replaced whole rather than merged, so a node that moves can't be left carrying
+the altitude it had two hilltops ago.
+
 The first time a node is heard from, it's announced inline as:
 `🟢 **SHRT · Long Name** is now on the mesh`
 
@@ -244,8 +261,86 @@ Notes on reading the output:
 - The hop column comes from `hops_away` on the uplinked packet. `direct` means the
   gateway heard the node itself; `?` means that packet carried no hop count.
 
-The command is registered per-server on startup, in each server holding a channel from
-`CHANNEL_MAP`, which makes it available immediately. If the log shows a registration
+**`/status`** — how the bridge, its MQTT link and your own node are doing:
+
+```
+📊 loracord status
+Uptime   3h 12m
+MQTT     connected · 192.168.1.10:1883
+Topic    msh/EU_868/2/json/#
+Gateway  !a1b2c3d4 (discovered)
+Dedupe   5m window
+
+Traffic since startup
+Packets seen        1204
+Duplicates dropped   143
+Mesh to Discord       87
+Discord to mesh       12
+Sends refused          0
+
+Channels
+LongFast → #meshtastic · index 0 (discovered)
+Private  → #mesh-private · ⚠️ index not known yet
+
+This node — MDYS · Matt's Base
+Battery      mains powered (4.12 V)
+Air util TX  3.2%
+Chan util    11.4%
+Node uptime  2d 4h
+Heard        2m ago
+```
+
+This is the command to reach for when messages aren't getting through. The two
+rows that usually explain it:
+
+- **Gateway** — `not known yet` means no uplink has arrived, so Discord → mesh
+  sends are still being refused.
+- **Channels** — a channel marked `⚠️ index not known yet` can receive from the
+  mesh but can't transmit to it yet, because the bridge hasn't seen a packet on
+  that channel to learn its slot number. Pin it in `CHANNEL_MAP` to skip the wait.
+
+**`This node`** comes from your own gateway's telemetry, so it appears once the
+node has reported in on its own telemetry interval — a few minutes after a cold
+start. `Air util TX` is the node's own measure of how much of the last hour it
+spent transmitting, which is the figure that matters against the 10% duty cycle
+EU 868 allows.
+
+**`/node <key>`** — everything the bridge knows about one node:
+
+```
+📡 HILL · Hilltop Relay
+Node ID      !7f3e0011 (2134573073)
+Hardware     HELTEC_V3 · CLIENT
+Last heard   4m ago
+Hops         2 hops
+Signal       SNR 6.25 dB · RSSI -94 dBm
+Position     53.48095, -2.23743 · 187 m (12m ago)
+Distance     2.4 km NE of this gateway
+Battery      64% (3.87 V)
+Air util TX  1.1%
+Chan util    9.8%
+Environment  18.4 °C · 61% RH · 1013.2 hPa
+Node uptime  9h 42m
+```
+
+The key can be a node ID (`!7f3e0011`, `0x7f3e0011` or a plain decimal), an exact
+short name (`HILL`), or part of a long name or hex ID (`hillt`, `3e00`). Those are
+tried in that order and the first that matches wins, so an exact short name is
+never buried under loose substring hits. Autocomplete offers the nodes currently
+in the cache as you type, and picking one resolves to its ID exactly.
+
+Several matches get listed to choose from rather than the bridge guessing; none
+gets a plain "nothing matching that" reply.
+
+Every row is omitted when the bridge has no reading for it, so the reply only ever
+states things actually heard over the air. A node that has sent nothing but a
+position packet shows little more than its ID and when it was last heard — the
+rest arrives as it sends `nodeinfo` and telemetry. `Distance` needs a position
+from both that node and your gateway, and a map link is appended whenever the
+node's own position is known.
+
+Commands are registered per-server on startup, in each server holding a channel from
+`CHANNEL_MAP`, which makes them available immediately. If the log shows a registration
 failure, the bot was almost certainly invited before `applications.commands` was added
 to its OAuth2 scopes — re-invite it with that scope (step 6 above) and restart.
 
@@ -273,7 +368,11 @@ single-gateway broker and want the check gone entirely, set `DEDUPE_WINDOW_MS=0`
 
 ### Echo Prevention
 
-The bridge ignores any uplinked packets where `from` matches the gateway node ID — whether that was configured via `GATEWAY_NODE_ID` or discovered from the topic. This prevents messages the node rebroadcasts from being echo-posted back to Discord.
+The bridge never bridges or announces packets where `from` matches the gateway node ID — whether that was configured via `GATEWAY_NODE_ID` or discovered from the topic. This prevents messages the node rebroadcasts from being echo-posted back to Discord.
+
+Those packets are still *recorded*, though: your gateway's own telemetry is where
+`/status` gets this node's battery and airtime figures, and it appears in `/nodes`
+and `/node` like any other node. What's suppressed is posting, not listening.
 
 Until the ID is known (i.e. before the first uplink arrives on a fresh start with `GATEWAY_NODE_ID` unset), Discord → mesh sends are refused with a warning, since the downlink envelope needs it.
 
@@ -381,8 +480,9 @@ docker compose logs -f | npx pino-pretty
 │            └──────┬──────┘                                 │
 │                   │                                        │
 │            ┌──────▼──────┐                                 │
-│            │  nodeCache  │  (node ID → name, last seen,    │
-│            │             │   hops away)                    │
+│            │  nodeCache  │  (node ID → names, last seen,   │
+│            │             │   hops, signal, position,       │
+│            │             │   telemetry)                    │
 │            └─────────────┘                                 │
 └─────────────────────────────────────────────────────────────┘
          │                              │

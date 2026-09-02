@@ -4,6 +4,7 @@ const mqtt = require('mqtt');
 const config = require('./config');
 const nodeCache = require('./nodeCache');
 const packetDedupe = require('./packetDedupe');
+const stats = require('./stats');
 const nodeId = require('./nodeId');
 const log = require('./logger').child({ component: 'MQTT' });
 
@@ -19,6 +20,9 @@ let gatewayNodeId = config.meshtastic.gatewayNodeId;
 // seed this from any indices pinned in CHANNEL_MAP and fill in the rest from
 // the `channel` field on incoming packets (see discoverChannelIndex).
 const channelIndexes = new Map(config.channels.meshChannelIndex);
+
+// The topic we actually subscribed to, reported by /status
+let subscribedTopic = null;
 
 // Callbacks registered by the bridge
 let onTextMessage = null;
@@ -52,6 +56,7 @@ function connect(handlers) {
     // Subscribe to all JSON uplink topics under our root
     // msh/REGION/2/json/+/+ catches all channels and all gateway nodes
     const jsonTopic = `${config.meshtastic.rootTopic}/2/json/#`;
+    subscribedTopic = jsonTopic;
     client.subscribe(jsonTopic, { qos: 0 }, (err) => {
       if (err) {
         log.error({ err, topic: jsonTopic }, 'Failed to subscribe');
@@ -194,6 +199,23 @@ function getChannelIndex(meshChannel) {
   return channelIndexes.has(meshChannel) ? channelIndexes.get(meshChannel) : null;
 }
 
+function isConnected() {
+  return Boolean(client && client.connected);
+}
+
+/**
+ * What /status reports about the MQTT side: where we're pointed, whether we're
+ * up, and what we ended up subscribed to.
+ */
+function getConnectionInfo() {
+  return {
+    connected: isConnected(),
+    broker: `${config.mqtt.host}:${config.mqtt.port}`,
+    authenticated: Boolean(config.mqtt.username),
+    subscribedTopic,
+  };
+}
+
 /**
  * Pull the message body out of a text packet's payload.
  *
@@ -217,6 +239,100 @@ function extractText(payload) {
 function extractHops(msg) {
   const raw = msg.hops_away ?? msg.hopsAway;
   return Number.isInteger(raw) ? raw : null;
+}
+
+/**
+ * Read a numeric field published under either spelling.
+ *
+ * The JSON firmware emits snake_case, but not every build agrees — hops_away
+ * above already has to accept both — so look under each and take whichever is
+ * a real number.
+ */
+function numericField(source, snakeCase, camelCase) {
+  const raw = source[snakeCase] ?? source[camelCase];
+  return Number.isFinite(raw) ? raw : null;
+}
+
+/**
+ * Signal quality the gateway measured while receiving this packet.
+ *
+ * Older firmware omits both, and a genuine 0 dB SNR is meaningful, so an
+ * absent reading must not be recorded as zero.
+ */
+function extractSignal(msg) {
+  const signal = {};
+  if (Number.isFinite(msg.snr)) signal.snr = msg.snr;
+  if (Number.isFinite(msg.rssi)) signal.rssi = msg.rssi;
+  return signal;
+}
+
+/**
+ * A coordinate published either as Meshtastic's scaled integer (degrees × 1e7)
+ * or, on some builds, as a plain float.
+ */
+function extractCoordinate(payload, base) {
+  const scaled = payload[`${base}_i`];
+  if (Number.isInteger(scaled)) return scaled / 1e7;
+  return Number.isFinite(payload[base]) ? payload[base] : null;
+}
+
+/**
+ * Pull a fix out of a position packet.
+ *
+ * A packet with no usable latitude/longitude pair — which is what a node with
+ * no GPS lock sends — yields nothing rather than a fix at (0, 0).
+ */
+function extractPosition(payload) {
+  const latitude = extractCoordinate(payload, 'latitude');
+  const longitude = extractCoordinate(payload, 'longitude');
+  if (latitude === null || longitude === null) return null;
+
+  const position = { latitude, longitude, at: Date.now() };
+  const altitude = numericField(payload, 'altitude', 'altitude');
+  if (altitude !== null) position.altitude = altitude;
+  return position;
+}
+
+// Telemetry arrives as one of two payload shapes, and a node may send both.
+// They're cached separately so a device reading never clears an environment
+// one, and each group is replaced whole when a fresh packet of its kind lands.
+const DEVICE_METRICS = {
+  batteryLevel: ['battery_level', 'batteryLevel'],
+  voltage: ['voltage', 'voltage'],
+  channelUtilization: ['channel_utilization', 'channelUtilization'],
+  airUtilTx: ['air_util_tx', 'airUtilTx'],
+  uptimeSeconds: ['uptime_seconds', 'uptimeSeconds'],
+};
+
+const ENVIRONMENT_METRICS = {
+  temperature: ['temperature', 'temperature'],
+  relativeHumidity: ['relative_humidity', 'relativeHumidity'],
+  barometricPressure: ['barometric_pressure', 'barometricPressure'],
+};
+
+function extractMetrics(payload, fields) {
+  const metrics = {};
+  for (const [name, [snakeCase, camelCase]] of Object.entries(fields)) {
+    const value = numericField(payload, snakeCase, camelCase);
+    if (value !== null) metrics[name] = value;
+  }
+  if (!Object.keys(metrics).length) return null;
+  metrics.at = Date.now();
+  return metrics;
+}
+
+/**
+ * Everything a telemetry packet has to say, keyed by the cache group it
+ * belongs in. Groups the packet said nothing about are left out entirely, so
+ * the merge in nodeCache doesn't blank them.
+ */
+function extractTelemetry(payload) {
+  const info = {};
+  const deviceMetrics = extractMetrics(payload, DEVICE_METRICS);
+  if (deviceMetrics) info.deviceMetrics = deviceMetrics;
+  const environmentMetrics = extractMetrics(payload, ENVIRONMENT_METRICS);
+  if (environmentMetrics) info.environmentMetrics = environmentMetrics;
+  return info;
 }
 
 /**
@@ -261,6 +377,8 @@ function handleMessage(topic, payload) {
   if (!parsed) return;
   const { meshChannel, gatewayId } = parsed;
 
+  stats.increment('packetsReceived');
+
   discoverGatewayNodeId(gatewayId);
   // Before the echo check below — our own reflected packets name their channel
   // index just as usefully as anyone else's.
@@ -272,6 +390,7 @@ function handleMessage(topic, payload) {
   // idempotent, and a duplicate's topic identifies its channel just as well.
   if (packetDedupe.isDuplicate(msg)) {
     log.debug({ packetId: msg.id, from: msg.from, topic }, 'Ignoring duplicate packet');
+    stats.increment('duplicatesDropped');
     return;
   }
 
@@ -282,24 +401,34 @@ function handleMessage(topic, payload) {
   // once here instead of guarding each branch.
   if (!Number.isInteger(fromId)) return;
 
-  // ── Ignore our own gateway's reflected messages ────────────────────────────
-  if (fromId === gatewayNodeId) return;
+  // ── Our own gateway ───────────────────────────────────────────────────────
+  // Its packets are still worth caching — /status reports this node's battery
+  // and airtime straight off its own telemetry — but they're never bridged or
+  // announced: text from it is our own traffic coming back, and the node
+  // running the bridge didn't "arrive on the mesh" in any sense worth posting.
+  const isOwnGateway = fromId === gatewayNodeId;
 
   const msgType = msg.type;
 
-  // Only overwrite a cached hop count when this packet actually reported one
+  // Only overwrite a cached reading when this packet actually carried one
   const hopsAway = extractHops(msg);
   const hops = hopsAway === null ? {} : { hopsAway };
+  const signal = extractSignal(msg);
 
   // ── Node info — the only packet that carries names ───────────────────────
   if (msgType === 'nodeinfo' && msg.payload) {
+    const { hardware, role } = msg.payload;
     recordNodeHeard({
       fromId,
       meshChannel,
+      announce: !isOwnGateway,
       info: {
         longName: msg.payload.longname || nodeId.format(fromId),
         shortName: msg.payload.shortname || '????',
+        ...(typeof hardware === 'string' && hardware ? { hardware } : {}),
+        ...(typeof role === 'string' && role ? { role } : {}),
         ...hops,
+        ...signal,
       },
     });
     return;
@@ -316,7 +445,10 @@ function handleMessage(topic, payload) {
     // Cached but deliberately not announced: the message posted immediately
     // below is itself proof the node is there, so a "now on the mesh" notice
     // above it would say nothing the next line doesn't.
-    recordNodeHeard({ fromId, meshChannel, info: hops, announce: false });
+    recordNodeHeard({ fromId, meshChannel, info: { ...hops, ...signal }, announce: false });
+
+    // Our own gateway's text is the traffic we just published, reflected back
+    if (isOwnGateway) return;
 
     onTextMessage?.({
       meshChannel,
@@ -327,9 +459,29 @@ function handleMessage(topic, payload) {
   }
 
   // ── Position / telemetry / neighbour info — presence, never bridged ──────
+  // These carry the readings /node reports, so each is unpacked for what it
+  // holds; none of them is ever posted to Discord as a message of its own.
   if (msgType === 'position' || msgType === 'neighborinfo' || msgType === 'telemetry') {
-    recordNodeHeard({ fromId, meshChannel, info: hops });
+    const info = { ...hops, ...signal };
+
+    if (msgType === 'position' && msg.payload) {
+      const position = extractPosition(msg.payload);
+      if (position) info.position = position;
+    }
+
+    if (msgType === 'telemetry' && msg.payload) {
+      Object.assign(info, extractTelemetry(msg.payload));
+    }
+
+    recordNodeHeard({ fromId, meshChannel, info, announce: !isOwnGateway });
   }
 }
 
-module.exports = { connect, sendToMesh, getGatewayNodeId, getChannelIndex };
+module.exports = {
+  connect,
+  sendToMesh,
+  getGatewayNodeId,
+  getChannelIndex,
+  isConnected,
+  getConnectionInfo,
+};

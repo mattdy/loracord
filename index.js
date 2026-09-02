@@ -5,6 +5,7 @@ const mqttClient = require('./mqttClient');
 const discordClient = require('./discordClient');
 const nodeCache = require('./nodeCache');
 const packetDedupe = require('./packetDedupe');
+const stats = require('./stats');
 const nodeId = require('./nodeId');
 const formatter = require('./formatter');
 const log = require('./logger').child({ component: 'Bridge' });
@@ -24,7 +25,8 @@ async function handleMeshTextMessage({ meshChannel, fromId, text }) {
 
   const formatted = formatter.meshMessageToDiscord({ fromId, text });
   log.info(`Mesh → Discord [${meshChannel}]: ${formatted}`);
-  await discordClient.sendToChannel(discordChannelId, formatted);
+  const posted = await discordClient.sendToChannel(discordChannelId, formatted);
+  if (posted) stats.increment('meshToDiscord');
 }
 
 /**
@@ -56,6 +58,7 @@ async function handleDiscordMessage({ discordChannelId, content, authorTag }) {
 
   log.info(`Discord [${meshChannel}] from ${authorTag}: ${content}`);
   const sent = mqttClient.sendToMesh(content, meshChannel);
+  stats.increment(sent === null ? 'sendsRefused' : 'discordToMesh');
 
   // Confirm with what actually went out rather than what was typed, so a
   // message truncated to fit the mesh is visibly truncated in the echo.
@@ -82,6 +85,100 @@ function handleNodesCommand() {
   const nodes = nodeCache.list();
   log.info(`/nodes → ${nodes.length} node(s)`);
   return formatter.nodeListToDiscord(nodes);
+}
+
+/**
+ * Called when someone runs /status in Discord.
+ *
+ * Reports the things that actually stop the bridge working: whether MQTT is
+ * up, whether the gateway node ID is known yet, and whether each mapped
+ * channel has a slot number to transmit on.
+ *
+ * @returns {string[]} the reply, split across messages if it runs long
+ */
+function handleStatusCommand() {
+  const gatewayId = mqttClient.getGatewayNodeId();
+
+  const channels = [...config.channels.meshtasticToDiscord.entries()].map(
+    ([meshChannel, discordChannelId]) => ({
+      meshChannel,
+      discordChannelId,
+      index: mqttClient.getChannelIndex(meshChannel),
+      pinned: config.channels.meshChannelIndex.has(meshChannel),
+    })
+  );
+
+  log.info('/status');
+  return formatter.statusToDiscord({
+    mqtt: mqttClient.getConnectionInfo(),
+    gateway: {
+      id: gatewayId,
+      // Whether the ID came from GATEWAY_NODE_ID or was learned from a topic
+      source: config.meshtastic.gatewayNodeId === null ? 'discovered' : 'configured',
+      entry: gatewayId === null ? null : nodeCache.getEntry(gatewayId),
+    },
+    channels,
+    counters: stats.snapshot(),
+    dedupe: { enabled: packetDedupe.enabled, windowMs: packetDedupe.windowMs },
+  });
+}
+
+/**
+ * Called when someone runs /node in Discord.
+ *
+ * The key can be an ID, a short name or part of a long name, so a lookup can
+ * legitimately match nothing or several nodes — those get their own replies
+ * rather than an arbitrary pick.
+ *
+ * @param {string} key
+ * @returns {string[]} the reply, split across messages if it runs long
+ */
+function handleNodeCommand(key) {
+  const matches = nodeCache.find(key);
+  log.info(`/node "${key}" → ${matches.length} match(es)`);
+
+  if (!matches.length) return formatter.nodeNotFoundToDiscord(key);
+  if (matches.length > 1) return formatter.nodeChoicesToDiscord(key, matches);
+
+  const [node] = matches;
+  const gatewayId = mqttClient.getGatewayNodeId();
+  const gateway = gatewayId === null ? null : nodeCache.getEntry(gatewayId);
+
+  return formatter.nodeDetailToDiscord({
+    node,
+    isGateway: node.id === gatewayId,
+    gatewayPosition: gateway ? gateway.position : null,
+  });
+}
+
+/**
+ * Suggest nodes as someone types the /node key.
+ *
+ * Suggestions carry the hex ID as their value, so picking one resolves to
+ * exactly that node however ambiguous the text they typed was.
+ *
+ * @param {string} partial
+ * @returns {Array<{ name: string, value: string }>}
+ */
+function handleNodeAutocomplete(partial) {
+  const query = String(partial || '').trim();
+  const matches = query ? nodeCache.find(query) : nodeCache.list();
+  return matches.map((node) => ({
+    name: autocompleteLabel(node),
+    value: nodeId.format(node.id),
+  }));
+}
+
+/**
+ * A node as it reads in the autocomplete dropdown, clipped to the 100
+ * characters Discord allows a choice label.
+ */
+function autocompleteLabel(node) {
+  const name = node.longName
+    ? `${node.shortName || '????'} · ${node.longName}`
+    : 'no nodeinfo yet';
+  const label = `${name} (${nodeId.format(node.id)})`;
+  return label.length > 100 ? `${label.slice(0, 99)}…` : label;
 }
 
 // ─── Startup ──────────────────────────────────────────────────────────────────
@@ -111,6 +208,9 @@ async function main() {
   await discordClient.connect({
     onDiscordMessage: handleDiscordMessage,
     onNodesCommand: handleNodesCommand,
+    onStatusCommand: handleStatusCommand,
+    onNodeCommand: handleNodeCommand,
+    onNodeAutocomplete: handleNodeAutocomplete,
   });
 
   // Then connect MQTT
