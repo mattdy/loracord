@@ -34,11 +34,16 @@ function meshMessageToDiscord({ fromId, text }) {
  * holding their own broker connection (i.e. gateways), not the mesh nodes we
  * report on here. Absence shows up instead as a node ageing out of /nodes.
  *
- * Output: "🟢 SHRT · Long Name is now on the mesh"
+ * How far off it was heard is included when the packet reported a hop count,
+ * which is the one moment that reading is genuinely news — it says whether the
+ * new arrival is on the doorstep or several relays out.
+ *
+ * Output: "🟢 SHRT · Long Name is now on the mesh · 2 hops away"
  */
-function nodeEventToDiscord({ type, displayName }) {
+function nodeEventToDiscord({ type, displayName, hopsAway }) {
   if (type === 'online') {
-    return `🟢 **${displayName}** is now on the mesh`;
+    const distance = formatHopDistance(hopsAway);
+    return `🟢 **${displayName}** is now on the mesh${distance ? ` · ${distance}` : ''}`;
   }
   return null;
 }
@@ -156,6 +161,17 @@ function formatHops(hopsAway) {
   if (!Number.isInteger(hopsAway)) return '?';
   if (hopsAway === 0) return 'direct';
   return hopsAway === 1 ? '1 hop' : `${hopsAway} hops`;
+}
+
+/**
+ * The same reading as formatHops, phrased to sit in a sentence.
+ *
+ * Returns null rather than '?' when no hop count was reported: a line of prose
+ * can simply omit the detail, where a table column has to fill its cell.
+ */
+function formatHopDistance(hopsAway) {
+  if (!Number.isInteger(hopsAway)) return null;
+  return hopsAway === 0 ? 'heard direct' : `${formatHops(hopsAway)} away`;
 }
 
 /**

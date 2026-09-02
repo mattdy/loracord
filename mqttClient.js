@@ -33,7 +33,7 @@ let onNodeEvent = null;
  *
  * @param {object} handlers
  * @param {function} handlers.onTextMessage  - called with { meshChannel, fromId, text }
- * @param {function} handlers.onNodeEvent    - called with { meshChannel, nodeId, type: 'online', displayName }
+ * @param {function} handlers.onNodeEvent    - called with { meshChannel, nodeId, type: 'online', displayName, hopsAway }
  */
 function connect(handlers) {
   onTextMessage = handlers.onTextMessage;
@@ -358,6 +358,10 @@ function recordNodeHeard({ fromId, meshChannel, info, announce = true }) {
     nodeId: fromId,
     type: 'online',
     displayName: nodeCache.getDisplayName(fromId),
+    // Read back rather than taken from info: a first sighting has nothing
+    // cached to merge over, so this is exactly what the announcing packet
+    // carried — and undefined when it carried no hop count at all.
+    hopsAway: nodeCache.getEntry(fromId)?.hopsAway,
   });
 }
 

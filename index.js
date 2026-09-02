@@ -33,13 +33,13 @@ async function handleMeshTextMessage({ meshChannel, fromId, text }) {
  * Called the first time a node is heard from.
  * Posted inline in the relevant channel, unless SUPPRESS_NODE_EVENTS is set.
  */
-async function handleNodeEvent({ meshChannel, nodeId, type, displayName }) {
+async function handleNodeEvent({ meshChannel, nodeId, type, displayName, hopsAway }) {
   if (config.suppressNodeEvents) return;
 
   const discordChannelId = config.channels.meshtasticToDiscord.get(meshChannel);
   if (!discordChannelId) return;
 
-  const formatted = formatter.nodeEventToDiscord({ type, displayName });
+  const formatted = formatter.nodeEventToDiscord({ type, displayName, hopsAway });
   if (!formatted) return;
 
   log.info(`Node event → Discord [${meshChannel}]: ${formatted}`);

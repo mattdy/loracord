@@ -55,7 +55,12 @@ the altitude it had two hilltops ago.
 ### Node announcements
 
 The first time a node is heard from, it's announced inline as:
-`🟢 **SHRT · Long Name** is now on the mesh`
+`🟢 **SHRT · Long Name** is now on the mesh · 2 hops away`
+
+The hop count comes from the announcing packet — `heard direct` for a node
+whose signal reached the gateway itself. Firmware reports it only when the
+packet carried a usable count, and the trailing detail is left off entirely
+when it didn't.
 
 The exception is a node first heard via a text message: its message is bridged
 into the channel as normal and the node is cached like any other, but no notice
