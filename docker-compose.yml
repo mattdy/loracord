@@ -24,6 +24,7 @@ services:
       CHANNEL_MAP: ${CHANNEL_MAP}
 
       # ── Optional ─────────────────────────────────────────────────────
+      CONFIRM_SENDS: ${CONFIRM_SENDS:-false}
       NODE_CACHE_TTL_MS: ${NODE_CACHE_TTL_MS:-3600000}
       LOG_LEVEL: ${LOG_LEVEL:-info}
 

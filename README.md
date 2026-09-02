@@ -203,6 +203,11 @@ When a message is sent in a mapped Discord channel:
 
 Messages longer than 220 characters are truncated (Meshtastic's protocol limit is ~228 bytes).
 
+Set `CONFIRM_SENDS=true` to have the bot echo each bridged message back into the
+Discord channel as `✅ Sent to mesh: your message`. The echo is the text *as sent*,
+so a message that was truncated to fit shows up truncated — which is the point of
+having it. Off by default, since it doubles the traffic in a busy channel.
+
 ### Echo Prevention
 
 The bridge ignores any uplinked packets where `from` matches the gateway node ID — whether that was configured via `GATEWAY_NODE_ID` or discovered from the topic. This prevents messages the node rebroadcasts from being echo-posted back to Discord.
@@ -336,5 +341,6 @@ docker compose logs -f | npx pino-pretty
 | `MQTT_ROOT_TOPIC` | | `msh/EU_868` | Meshtastic root topic |
 | `GATEWAY_NODE_ID` | | auto-discovered | Gateway node ID as hex (`!a1b2c3d4`) or decimal, for echo prevention + downlink |
 | `CHANNEL_MAP` | ✅ | — | `MeshChannel:DiscordChannelId,...`, or `MeshChannel:ChannelIndex:DiscordChannelId,...` to pin indices |
+| `CONFIRM_SENDS` | | `false` | Echo each bridged message back into Discord, showing what actually reached the mesh |
 | `NODE_CACHE_TTL_MS` | | `3600000` | Node info cache TTL (ms) |
 | `LOG_LEVEL` | | `info` | `trace`, `debug`, `info`, `warn`, `error`, `fatal`, or `silent` |

@@ -46,12 +46,21 @@ async function handleNodeEvent({ meshChannel, nodeId, type, displayName }) {
  * Called when a user types in a mapped Discord channel.
  * Publishes the message to the mesh via MQTT downlink.
  */
-function handleDiscordMessage({ discordChannelId, content, authorTag }) {
+async function handleDiscordMessage({ discordChannelId, content, authorTag }) {
   const meshChannel = config.channels.discordToMeshtastic.get(discordChannelId);
   if (!meshChannel) return; // shouldn't happen, but be defensive
 
   log.info(`Discord [${meshChannel}] from ${authorTag}: ${content}`);
-  mqttClient.sendToMesh(content, meshChannel);
+  const sent = mqttClient.sendToMesh(content, meshChannel);
+
+  // Confirm with what actually went out rather than what was typed, so a
+  // message truncated to fit the mesh is visibly truncated in the echo.
+  if (sent !== null && config.confirmSends) {
+    await discordClient.sendToChannel(
+      discordChannelId,
+      formatter.sendConfirmationToDiscord({ text: sent })
+    );
+  }
 }
 
 // ─── Startup ──────────────────────────────────────────────────────────────────

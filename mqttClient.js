@@ -79,11 +79,13 @@ function connect(handlers) {
  *
  * @param {string} text
  * @param {string} meshChannel - name of the mesh channel to transmit on
+ * @returns {string|null} the text as it was actually sent (after truncation),
+ *   or null if the send was refused
  */
 function sendToMesh(text, meshChannel) {
   if (!client || !client.connected) {
     log.warn('Cannot send — not connected');
-    return false;
+    return null;
   }
 
   if (gatewayNodeId === null) {
@@ -91,7 +93,7 @@ function sendToMesh(text, meshChannel) {
       'Cannot send — gateway node ID not known yet. Waiting for the first uplink ' +
       'from your node, or set GATEWAY_NODE_ID to skip discovery.'
     );
-    return false;
+    return null;
   }
 
   const channelIndex = channelIndexes.get(meshChannel);
@@ -103,7 +105,7 @@ function sendToMesh(text, meshChannel) {
       'from the first packet seen on that channel; pin it in CHANNEL_MAP as ' +
       `"${meshChannel}:<index>:<discordChannelId>" to skip discovery.`
     );
-    return false;
+    return null;
   }
 
   // Truncate to Meshtastic's ~228 byte limit (conservative: 220 chars for multi-byte safety)
@@ -122,7 +124,7 @@ function sendToMesh(text, meshChannel) {
     else log.debug(`Published to mesh [${meshChannel} = index ${channelIndex}]: "${truncated}"`);
   });
 
-  return true;
+  return truncated;
 }
 
 // ─── Internal message handler ─────────────────────────────────────────────────

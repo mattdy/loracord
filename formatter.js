@@ -32,6 +32,18 @@ function nodeEventToDiscord({ type, displayName }) {
 }
 
 /**
+ * Format a confirmation that a Discord message made it onto the mesh.
+ *
+ * Echoes the text as it was actually sent, so a message truncated to fit
+ * Meshtastic's payload limit shows up truncated here too.
+ *
+ * Output: "✅ Sent to mesh: message text"
+ */
+function sendConfirmationToDiscord({ text }) {
+  return `✅ Sent to mesh: ${escapeDiscordMarkdown(text)}`;
+}
+
+/**
  * Escape Discord markdown special characters in user-provided text.
  * Prevents mesh messages containing * _ ` ~ from breaking Discord formatting.
  */
@@ -39,4 +51,4 @@ function escapeDiscordMarkdown(text) {
   return text.replace(/([*_`~\\|<>])/g, '\\$1');
 }
 
-module.exports = { meshMessageToDiscord, nodeEventToDiscord };
+module.exports = { meshMessageToDiscord, nodeEventToDiscord, sendConfirmationToDiscord };

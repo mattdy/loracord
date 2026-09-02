@@ -70,6 +70,15 @@ function parseGatewayNodeId(raw) {
   return nodeId.parse(raw, 'GATEWAY_NODE_ID');
 }
 
+/**
+ * Optional boolean env vars accept the usual spellings; anything else —
+ * including unset — means false.
+ */
+function parseBoolean(raw) {
+  if (!raw) return false;
+  return ['1', 'true', 'yes', 'on'].includes(raw.trim().toLowerCase());
+}
+
 const channelMap = parseChannelMap(process.env.CHANNEL_MAP);
 
 const config = {
@@ -89,6 +98,9 @@ const config = {
     gatewayNodeId: parseGatewayNodeId(process.env.GATEWAY_NODE_ID),
   },
   channels: channelMap,
+  // Echo each bridged Discord message back into its channel, showing exactly
+  // what reached the mesh (including truncation). Off by default.
+  confirmSends: parseBoolean(process.env.CONFIRM_SENDS),
   nodeCacheTtlMs: parseInt(process.env.NODE_CACHE_TTL_MS || '3600000', 10),
 };
 
