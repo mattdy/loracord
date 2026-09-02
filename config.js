@@ -101,6 +101,9 @@ const config = {
   // Echo each bridged Discord message back into its channel, showing exactly
   // what reached the mesh (including truncation). Off by default.
   confirmSends: parseBoolean(process.env.CONFIRM_SENDS),
+  // Suppress the "joined/left the mesh" notices, leaving only real messages
+  // bridged into Discord. Off by default, so the notices still post.
+  suppressNodeEvents: parseBoolean(process.env.SUPPRESS_NODE_EVENTS),
   nodeCacheTtlMs: parseInt(process.env.NODE_CACHE_TTL_MS || '3600000', 10),
 };
 

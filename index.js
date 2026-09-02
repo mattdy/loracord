@@ -28,9 +28,11 @@ async function handleMeshTextMessage({ meshChannel, fromId, text }) {
 
 /**
  * Called when a node comes online or goes offline.
- * Posted inline in the relevant channel.
+ * Posted inline in the relevant channel, unless SUPPRESS_NODE_EVENTS is set.
  */
 async function handleNodeEvent({ meshChannel, nodeId, type, displayName }) {
+  if (config.suppressNodeEvents) return;
+
   const discordChannelId = config.channels.meshtasticToDiscord.get(meshChannel);
   if (!discordChannelId) return;
 

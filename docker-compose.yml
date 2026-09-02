@@ -25,6 +25,7 @@ services:
 
       # ── Optional ─────────────────────────────────────────────────────
       CONFIRM_SENDS: ${CONFIRM_SENDS:-false}
+      SUPPRESS_NODE_EVENTS: ${SUPPRESS_NODE_EVENTS:-false}
       NODE_CACHE_TTL_MS: ${NODE_CACHE_TTL_MS:-3600000}
       LOG_LEVEL: ${LOG_LEVEL:-info}
 

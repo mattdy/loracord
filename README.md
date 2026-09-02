@@ -5,7 +5,7 @@ A bidirectional Meshtastic ↔ Discord bridge over MQTT, written in Node.js and 
 **What it does:**
 - Forwards incoming Meshtastic text messages to mapped Discord channels
 - Sends messages typed in those Discord channels back out over the mesh via MQTT downlink
-- Posts inline node online/offline events in the relevant channel
+- Posts inline node online/offline events in the relevant channel (can be suppressed)
 - Lists recently heard nodes on demand with a `/nodes` slash command
 
 ---
@@ -190,6 +190,10 @@ Meshtastic displays (`!a1b2c3d4`) rather than a name.
 
 Node online events are posted inline as: `🟢 **SHRT · Long Name** is now on the mesh`
 
+On a busy mesh these can outnumber the actual conversation, so set
+`SUPPRESS_NODE_EVENTS=true` to drop them and bridge only real messages. The node
+cache still tracks everything either way, so `/nodes` keeps working as normal.
+
 ### Discord → Mesh
 
 When a message is sent in a mapped Discord channel:
@@ -373,5 +377,6 @@ docker compose logs -f | npx pino-pretty
 | `GATEWAY_NODE_ID` | | auto-discovered | Gateway node ID as hex (`!a1b2c3d4`) or decimal, for echo prevention + downlink |
 | `CHANNEL_MAP` | ✅ | — | `MeshChannel:DiscordChannelId,...`, or `MeshChannel:ChannelIndex:DiscordChannelId,...` to pin indices |
 | `CONFIRM_SENDS` | | `false` | Echo each bridged message back into Discord, showing what actually reached the mesh |
+| `SUPPRESS_NODE_EVENTS` | | `false` | Don't post node join/leave notices into Discord |
 | `NODE_CACHE_TTL_MS` | | `3600000` | Node info cache TTL (ms) |
 | `LOG_LEVEL` | | `info` | `trace`, `debug`, `info`, `warn`, `error`, `fatal`, or `silent` |
