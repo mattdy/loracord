@@ -6,6 +6,7 @@ A bidirectional Meshtastic ↔ Discord bridge over MQTT, written in Node.js and 
 - Forwards incoming Meshtastic text messages to mapped Discord channels
 - Sends messages typed in those Discord channels back out over the mesh via MQTT downlink
 - Posts inline node online/offline events in the relevant channel
+- Lists recently heard nodes on demand with a `/nodes` slash command
 
 ---
 
@@ -77,7 +78,7 @@ value is read as decimal, so use the `!` or `0x` prefix if you mean hex.
    - **Message Content Intent** ← required to read channel messages
 5. Copy the **Token** — this is your `DISCORD_TOKEN`
 6. Go to **OAuth2 → URL Generator**:
-   - Scopes: `bot`
+   - Scopes: `bot`, `applications.commands` ← the second one is needed for `/nodes`
    - Bot Permissions: `Send Messages`, `Read Messages/View Channels`, `Read Message History`
 7. Copy the generated URL, open it in a browser, and invite the bot to your server
 
@@ -208,6 +209,35 @@ Discord channel as `✅ Sent to mesh: your message`. The echo is the text *as se
 so a message that was truncated to fit shows up truncated — which is the point of
 having it. Off by default, since it doubles the traffic in a busy channel.
 
+### Slash Commands
+
+**`/nodes`** — lists every node the bridge has heard from recently, most recent first:
+
+```
+📡 3 nodes heard in the last hour
+!a1b2c3d4  MDYS · Matt's Base     2m ago  direct
+!7f3e0011  HILL · Hilltop Relay  18m ago  2 hops
+!0c9a4d22  (no nodeinfo yet)     51m ago  ?
+```
+
+The reply is ephemeral — only the person who ran it sees it, so it doesn't clutter
+a bridged channel. Long lists are split across several messages.
+
+Notes on reading the output:
+
+- The list is whatever the in-memory node cache holds, so it **empties on restart**
+  and drops nodes once they go `NODE_CACHE_TTL_MS` (1 hour by default) without being
+  heard from. It's "recently heard", not the node's full NodeDB.
+- Nodes that have only sent position or telemetry packets show as `(no nodeinfo yet)`
+  — the bridge knows they exist but hasn't been told their name.
+- The hop column comes from `hops_away` on the uplinked packet. `direct` means the
+  gateway heard the node itself; `?` means that packet carried no hop count.
+
+The command is registered per-server on startup, in each server holding a channel from
+`CHANNEL_MAP`, which makes it available immediately. If the log shows a registration
+failure, the bot was almost certainly invited before `applications.commands` was added
+to its OAuth2 scopes — re-invite it with that scope (step 6 above) and restart.
+
 ### Echo Prevention
 
 The bridge ignores any uplinked packets where `from` matches the gateway node ID — whether that was configured via `GATEWAY_NODE_ID` or discovered from the topic. This prevents messages the node rebroadcasts from being echo-posted back to Discord.
@@ -312,7 +342,8 @@ docker compose logs -f | npx pino-pretty
 │            └──────┬──────┘                                 │
 │                   │                                        │
 │            ┌──────▼──────┐                                 │
-│            │  nodeCache  │  (node ID → display name)       │
+│            │  nodeCache  │  (node ID → name, last seen,    │
+│            │             │   hops away)                    │
 │            └─────────────┘                                 │
 └─────────────────────────────────────────────────────────────┘
          │                              │

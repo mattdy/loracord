@@ -206,6 +206,18 @@ function extractText(payload) {
   return JSON.stringify(payload);
 }
 
+/**
+ * How many hops a packet took to reach the gateway.
+ *
+ * The firmware includes this only when the packet carried a usable hop count,
+ * and a node heard directly reports zero, so an absent value has to stay
+ * distinct from a genuine 0.
+ */
+function extractHops(msg) {
+  const raw = msg.hops_away ?? msg.hopsAway;
+  return Number.isInteger(raw) ? raw : null;
+}
+
 function handleMessage(topic, payload) {
   // Only process JSON topics
   if (!topic.includes('/json/')) return;
@@ -234,6 +246,10 @@ function handleMessage(topic, payload) {
 
   const msgType = msg.type;
 
+  // Only overwrite a cached hop count when this packet actually reported one
+  const hopsAway = extractHops(msg);
+  const hops = hopsAway === null ? {} : { hopsAway };
+
   // ── Node info — cache it and fire an "updated" event ─────────────────────
   if (msgType === 'nodeinfo' && msg.payload) {
     const wasKnown = nodeCache.getEntry(fromId) !== null;
@@ -241,6 +257,7 @@ function handleMessage(topic, payload) {
       longName: msg.payload.longname || nodeId.format(fromId),
       shortName: msg.payload.shortname || '????',
       isOnline: true,
+      ...hops,
     });
 
     if (!wasKnown) {
@@ -269,7 +286,7 @@ function handleMessage(topic, payload) {
   // We track presence without emitting Discord events for every packet
   if (fromId && (msgType === 'position' || msgType === 'neighborinfo' || msgType === 'telemetry')) {
     const wasKnown = nodeCache.getEntry(fromId) !== null;
-    nodeCache.upsert(fromId, { isOnline: true });
+    nodeCache.upsert(fromId, { isOnline: true, ...hops });
     if (!wasKnown) {
       onNodeEvent?.({
         meshChannel,

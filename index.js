@@ -3,6 +3,7 @@
 const config = require('./config');
 const mqttClient = require('./mqttClient');
 const discordClient = require('./discordClient');
+const nodeCache = require('./nodeCache');
 const nodeId = require('./nodeId');
 const formatter = require('./formatter');
 const log = require('./logger').child({ component: 'Bridge' });
@@ -63,6 +64,23 @@ async function handleDiscordMessage({ discordChannelId, content, authorTag }) {
   }
 }
 
+// ─── Slash commands ───────────────────────────────────────────────────────────
+
+/**
+ * Called when someone runs /nodes in Discord.
+ *
+ * Reports what the bridge has heard recently — which is everything the node
+ * cache holds, so it empties on restart and drops nodes once they pass
+ * NODE_CACHE_TTL_MS without being heard from.
+ *
+ * @returns {string[]} the reply, split across messages if the list is long
+ */
+function handleNodesCommand() {
+  const nodes = nodeCache.list();
+  log.info(`/nodes → ${nodes.length} node(s)`);
+  return formatter.nodeListToDiscord(nodes);
+}
+
 // ─── Startup ──────────────────────────────────────────────────────────────────
 
 async function main() {
@@ -84,6 +102,7 @@ async function main() {
   // Connect Discord first so the client is ready before mesh messages arrive
   await discordClient.connect({
     onDiscordMessage: handleDiscordMessage,
+    onNodesCommand: handleNodesCommand,
   });
 
   // Then connect MQTT

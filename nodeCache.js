@@ -13,6 +13,7 @@ const nodeId = require('./nodeId');
  *     shortName: string,
  *     lastSeen: number (epoch ms),
  *     isOnline: boolean,
+ *     hopsAway: number (hops the last packet took, absent if unreported),
  *   }
  */
 const cache = new Map();
@@ -74,7 +75,22 @@ function evictStale() {
   }
 }
 
+/**
+ * Every node still inside the TTL window, most recently heard first.
+ *
+ * Stale entries are evicted first so the list honours the TTL exactly rather
+ * than trailing up to 10 minutes behind the periodic sweep below.
+ *
+ * @returns {Array<{ id: number, longName?: string, shortName?: string, lastSeen: number, isOnline?: boolean }>}
+ */
+function list() {
+  evictStale();
+  return [...cache.entries()]
+    .map(([id, entry]) => ({ id, ...entry }))
+    .sort((a, b) => b.lastSeen - a.lastSeen);
+}
+
 // Evict stale entries every 10 minutes
 setInterval(evictStale, 10 * 60 * 1000).unref();
 
-module.exports = { upsert, setOnline, getDisplayName, getEntry };
+module.exports = { upsert, setOnline, getDisplayName, getEntry, list };
