@@ -219,6 +219,32 @@ function extractHops(msg) {
   return Number.isInteger(raw) ? raw : null;
 }
 
+/**
+ * Record that a node was just heard from, announcing it if it's the first time.
+ *
+ * Every packet carrying a sender is evidence the node is alive, so they all
+ * refresh its cache entry; what differs is whether a first sighting is worth
+ * telling Discord about.
+ *
+ * @param {object} params
+ * @param {number} params.fromId       - sending node's decimal ID
+ * @param {string} params.meshChannel  - channel the packet arrived on
+ * @param {object} params.info         - fields to merge into the cache entry
+ * @param {boolean} [params.announce]  - post a notice on a first sighting
+ */
+function recordNodeHeard({ fromId, meshChannel, info, announce = true }) {
+  const wasKnown = nodeCache.getEntry(fromId) !== null;
+  nodeCache.upsert(fromId, info);
+
+  if (wasKnown || !announce) return;
+  onNodeEvent?.({
+    meshChannel,
+    nodeId: fromId,
+    type: 'online',
+    displayName: nodeCache.getDisplayName(fromId),
+  });
+}
+
 function handleMessage(topic, payload) {
   // Only process JSON topics
   if (!topic.includes('/json/')) return;
@@ -251,6 +277,11 @@ function handleMessage(topic, payload) {
 
   const fromId = msg.from; // decimal node ID
 
+  // Everything below keys the cache by node ID, and a malformed one would land
+  // there as an entry nothing can render a name for — so insist on a usable ID
+  // once here instead of guarding each branch.
+  if (!Number.isInteger(fromId)) return;
+
   // ── Ignore our own gateway's reflected messages ────────────────────────────
   if (fromId === gatewayNodeId) return;
 
@@ -260,29 +291,33 @@ function handleMessage(topic, payload) {
   const hopsAway = extractHops(msg);
   const hops = hopsAway === null ? {} : { hopsAway };
 
-  // ── Node info — cache it, announcing nodes we hadn't heard before ────────
+  // ── Node info — the only packet that carries names ───────────────────────
   if (msgType === 'nodeinfo' && msg.payload) {
-    const wasKnown = nodeCache.getEntry(fromId) !== null;
-    nodeCache.upsert(fromId, {
-      longName: msg.payload.longname || nodeId.format(fromId),
-      shortName: msg.payload.shortname || '????',
-      ...hops,
+    recordNodeHeard({
+      fromId,
+      meshChannel,
+      info: {
+        longName: msg.payload.longname || nodeId.format(fromId),
+        shortName: msg.payload.shortname || '????',
+        ...hops,
+      },
     });
-
-    if (!wasKnown) {
-      // New node appearing — treat as an online event
-      onNodeEvent?.({
-        meshChannel,
-        nodeId: fromId,
-        type: 'online',
-        displayName: nodeCache.getDisplayName(fromId),
-      });
-    }
     return;
   }
 
   // ── Text messages ─────────────────────────────────────────────────────────
   if (msgType === 'text' && msg.payload) {
+    // Hearing a node speak is as good a sign of life as any other packet.
+    // Without this a node that only ever chats never reaches the cache at all,
+    // so it stays missing from /nodes — and one already listed stops being
+    // refreshed while it talks, ageing out mid-conversation only to be
+    // re-announced by its next position packet.
+    //
+    // Cached but deliberately not announced: the message posted immediately
+    // below is itself proof the node is there, so a "now on the mesh" notice
+    // above it would say nothing the next line doesn't.
+    recordNodeHeard({ fromId, meshChannel, info: hops, announce: false });
+
     onTextMessage?.({
       meshChannel,
       fromId,
@@ -291,19 +326,9 @@ function handleMessage(topic, payload) {
     return;
   }
 
-  // ── Neighbour info / position can signal a node is alive ─────────────────
-  // We track presence without emitting Discord events for every packet
-  if (fromId && (msgType === 'position' || msgType === 'neighborinfo' || msgType === 'telemetry')) {
-    const wasKnown = nodeCache.getEntry(fromId) !== null;
-    nodeCache.upsert(fromId, hops);
-    if (!wasKnown) {
-      onNodeEvent?.({
-        meshChannel,
-        nodeId: fromId,
-        type: 'online',
-        displayName: nodeCache.getDisplayName(fromId),
-      });
-    }
+  // ── Position / telemetry / neighbour info — presence, never bridged ──────
+  if (msgType === 'position' || msgType === 'neighborinfo' || msgType === 'telemetry') {
+    recordNodeHeard({ fromId, meshChannel, info: hops });
   }
 }
 

@@ -191,6 +191,11 @@ Meshtastic displays (`!a1b2c3d4`) rather than a name.
 The first time a node is heard from, it's announced inline as:
 `🟢 **SHRT · Long Name** is now on the mesh`
 
+The exception is a node first heard via a text message: its message is bridged
+into the channel as normal and the node is cached like any other, but no notice
+is posted — the message itself is already proof the node is there, so a notice
+directly above it would add nothing.
+
 On a busy mesh these can outnumber the actual conversation, and the cache is
 empty on startup so a restart re-announces everything. Set
 `SUPPRESS_NODE_EVENTS=true` to drop them and bridge only real messages. The node
