@@ -1,0 +1,39 @@
+services:
+  loracord:
+    build: .
+    image: loracord:latest
+    container_name: loracord
+    restart: unless-stopped
+
+    environment:
+      # ── Discord ──────────────────────────────────────────────────────
+      DISCORD_TOKEN: ${DISCORD_TOKEN}
+
+      # ── MQTT ─────────────────────────────────────────────────────────
+      MQTT_HOST: ${MQTT_HOST}
+      MQTT_PORT: ${MQTT_PORT:-1883}
+      MQTT_USERNAME: ${MQTT_USERNAME:-}
+      MQTT_PASSWORD: ${MQTT_PASSWORD:-}
+
+      # ── Meshtastic ───────────────────────────────────────────────────
+      MQTT_ROOT_TOPIC: ${MQTT_ROOT_TOPIC:-msh/EU_868}
+      # Optional — leave unset to auto-discover from the first uplink
+      GATEWAY_NODE_ID: ${GATEWAY_NODE_ID:-}
+
+      # ── Channels ─────────────────────────────────────────────────────
+      CHANNEL_MAP: ${CHANNEL_MAP}
+
+      # ── Optional ─────────────────────────────────────────────────────
+      NODE_CACHE_TTL_MS: ${NODE_CACHE_TTL_MS:-3600000}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+
+    # Use host networking so the container can reach your local MQTT broker
+    # by its LAN IP without extra routing config. Change to bridge + ports
+    # if you prefer isolation.
+    network_mode: host
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
