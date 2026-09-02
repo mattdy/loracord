@@ -191,6 +191,19 @@ function getChannelIndex(meshChannel) {
   return channelIndexes.has(meshChannel) ? channelIndexes.get(meshChannel) : null;
 }
 
+/**
+ * Pull the message body out of a text packet's payload.
+ *
+ * The firmware wraps plaintext as { text: "…" }, but when the message itself
+ * parses as JSON it publishes that value in place of the wrapper — so someone
+ * typing "42" or "{}" on the mesh arrives here as a number or an object.
+ */
+function extractText(payload) {
+  if (typeof payload === 'string') return payload;
+  if (payload && typeof payload.text === 'string') return payload.text;
+  return JSON.stringify(payload);
+}
+
 function handleMessage(topic, payload) {
   // Only process JSON topics
   if (!topic.includes('/json/')) return;
@@ -245,7 +258,7 @@ function handleMessage(topic, payload) {
     onTextMessage?.({
       meshChannel,
       fromId,
-      text: msg.payload,
+      text: extractText(msg.payload),
     });
     return;
   }
