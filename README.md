@@ -171,9 +171,21 @@ The container will restart automatically on failure or reboot (`restart: unless-
 
 When a text message arrives on the mesh via MQTT, the bridge:
 
-1. Parses the JSON packet from the topic `msh/REGION/2/json/CHANNELNAME/!nodeId`
+1. Parses the JSON packet from the topic `msh/REGION/2/json/CHANNELNAME/!nodeId`:
+   ```json
+   { "from": 2712847316, "channel": 0, "type": "text", "payload": { "text": "message text" } }
+   ```
+   Note the asymmetry with the downlink below: uplinked text is **wrapped in an
+   object**, never a bare string. And if the message body itself happens to parse
+   as JSON, the firmware publishes that value in place of the wrapper — so a mesh
+   user typing `42` or `{"a":1}` yields a `payload` that is a number or an object.
+   The bridge unwraps all three shapes.
 2. Looks up the sender's short name and long name from its node cache
 3. Posts to the mapped Discord channel as: `**SHRT · Long Name**: message text`
+
+Nodes are usually seen via a position or telemetry packet before their `nodeinfo`
+arrives, and those carry no names — until one does, a node is shown by the hex ID
+Meshtastic displays (`!a1b2c3d4`) rather than a name.
 
 Node online events are posted inline as: `🟢 **SHRT · Long Name** is now on the mesh`
 
