@@ -48,11 +48,13 @@ function setOnline(id, isOnline) {
  */
 function getDisplayName(id) {
   const entry = cache.get(id);
-  if (!entry) {
+  // Presence-only packets (position, telemetry) create an entry carrying no
+  // names, so an entry existing doesn't mean we know what the node is called.
+  if (!entry || !entry.longName) {
     // Hexadecimal fallback matching Meshtastic convention
     return nodeId.format(id);
   }
-  return `${entry.shortName} · ${entry.longName}`;
+  return `${entry.shortName || '????'} · ${entry.longName}`;
 }
 
 function getEntry(id) {
