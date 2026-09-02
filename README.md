@@ -244,6 +244,28 @@ The command is registered per-server on startup, in each server holding a channe
 failure, the bot was almost certainly invited before `applications.commands` was added
 to its OAuth2 scopes — re-invite it with that scope (step 6 above) and restart.
 
+### Duplicate Suppression
+
+The bridge subscribes to `msh/REGION/2/json/#`, which covers **every** gateway
+publishing under that root, not just yours. That's deliberate — it's what lets
+the gateway node ID be discovered rather than configured — but it means a mesh
+packet that two gateways both heard gets uplinked twice, arriving as two
+identical JSON messages on two different topics.
+
+Left alone, each copy would post to Discord separately and overwrite the
+sender's cached hop count with the path through whichever gateway happened to
+arrive last. So each packet is remembered by its sender and packet ID
+(`from` + `id`, unique per transmission) for `DEDUPE_WINDOW_MS` — 5 minutes by
+default — and later copies are dropped before anything is posted or cached.
+
+Channel-index and gateway-ID discovery run *before* the check, since a
+duplicate's topic identifies its channel just as well as the first copy's.
+
+Packets carrying no usable ID are always treated as new: bridging an occasional
+duplicate beats silently swallowing a real message. If you're on a
+single-gateway broker and want the check gone entirely, set `DEDUPE_WINDOW_MS=0`
+— the startup log says which mode is active.
+
 ### Echo Prevention
 
 The bridge ignores any uplinked packets where `from` matches the gateway node ID — whether that was configured via `GATEWAY_NODE_ID` or discovered from the topic. This prevents messages the node rebroadcasts from being echo-posted back to Discord.
@@ -341,6 +363,12 @@ docker compose logs -f | npx pino-pretty
 │  │ json/#       │      │ channels     │                    │
 │  └──────┬───────┘      └──────┬───────┘                    │
 │         │                     │                            │
+│         │                     │                            │
+│  ┌──────▼───────┐             │                            │
+│  │ packetDedupe │             │  (drop copies of a packet  │
+│  │              │             │   other gateways uplinked) │
+│  └──────┬───────┘             │                            │
+│         │                     │                            │
 │         └─────────┬───────────┘                            │
 │                   │                                        │
 │            ┌──────▼──────┐                                 │
@@ -381,4 +409,5 @@ docker compose logs -f | npx pino-pretty
 | `CONFIRM_SENDS` | | `false` | Echo each bridged message back into Discord, showing what actually reached the mesh |
 | `SUPPRESS_NODE_EVENTS` | | `false` | Don't post the 🟢 notice when a node is first heard |
 | `NODE_CACHE_TTL_MS` | | `3600000` | Node info cache TTL (ms) |
+| `DEDUPE_WINDOW_MS` | | `300000` | How long a packet ID is remembered to recognise copies uplinked by other gateways; `0` disables |
 | `LOG_LEVEL` | | `info` | `trace`, `debug`, `info`, `warn`, `error`, `fatal`, or `silent` |

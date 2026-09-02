@@ -4,6 +4,7 @@ const config = require('./config');
 const mqttClient = require('./mqttClient');
 const discordClient = require('./discordClient');
 const nodeCache = require('./nodeCache');
+const packetDedupe = require('./packetDedupe');
 const nodeId = require('./nodeId');
 const formatter = require('./formatter');
 const log = require('./logger').child({ component: 'Bridge' });
@@ -93,6 +94,11 @@ async function main() {
     gatewayNodeId !== null
       ? `Gateway node ID: ${nodeId.format(gatewayNodeId)} (${gatewayNodeId})`
       : 'Gateway node ID: not set — will auto-discover from the first uplink'
+  );
+  log.info(
+    packetDedupe.enabled
+      ? `Duplicate suppression: packets remembered for ${Math.round(packetDedupe.windowMs / 1000)}s`
+      : 'Duplicate suppression: disabled — a packet heard by two gateways will bridge twice'
   );
   log.info(`Mapped channels: ${[...config.channels.meshtasticToDiscord.entries()]
     .map(([m, d]) => {

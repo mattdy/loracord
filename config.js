@@ -79,6 +79,17 @@ function parseBoolean(raw) {
   return ['1', 'true', 'yes', 'on'].includes(raw.trim().toLowerCase());
 }
 
+/**
+ * A millisecond duration from the environment. Anything unparseable falls back
+ * to the default rather than poisoning later arithmetic with NaN, which would
+ * fail silently; zero is kept, since callers read it as "disabled".
+ */
+function parseDurationMs(raw, fallback) {
+  if (!raw || !raw.trim()) return fallback;
+  const parsed = parseInt(raw, 10);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
+}
+
 const channelMap = parseChannelMap(process.env.CHANNEL_MAP);
 
 const config = {
@@ -104,7 +115,10 @@ const config = {
   // Suppress the "joined/left the mesh" notices, leaving only real messages
   // bridged into Discord. Off by default, so the notices still post.
   suppressNodeEvents: parseBoolean(process.env.SUPPRESS_NODE_EVENTS),
-  nodeCacheTtlMs: parseInt(process.env.NODE_CACHE_TTL_MS || '3600000', 10),
+  nodeCacheTtlMs: parseDurationMs(process.env.NODE_CACHE_TTL_MS, 3600000),
+  // How long to remember a packet's ID so later copies of it, uplinked by
+  // other gateways, can be recognised as duplicates. Zero disables that.
+  dedupeWindowMs: parseDurationMs(process.env.DEDUPE_WINDOW_MS, 300000),
 };
 
 module.exports = config;

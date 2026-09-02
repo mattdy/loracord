@@ -3,6 +3,7 @@
 const mqtt = require('mqtt');
 const config = require('./config');
 const nodeCache = require('./nodeCache');
+const packetDedupe = require('./packetDedupe');
 const nodeId = require('./nodeId');
 const log = require('./logger').child({ component: 'MQTT' });
 
@@ -238,6 +239,15 @@ function handleMessage(topic, payload) {
   // Before the echo check below — our own reflected packets name their channel
   // index just as usefully as anyone else's.
   discoverChannelIndex(meshChannel, msg.channel);
+
+  // ── Drop packets we've already handled ────────────────────────────────────
+  // Our subscription spans every gateway under the root topic, so a packet two
+  // gateways both heard arrives twice. Discovery above runs first: it's
+  // idempotent, and a duplicate's topic identifies its channel just as well.
+  if (packetDedupe.isDuplicate(msg)) {
+    log.debug({ packetId: msg.id, from: msg.from, topic }, 'Ignoring duplicate packet');
+    return;
+  }
 
   const fromId = msg.from; // decimal node ID
 
