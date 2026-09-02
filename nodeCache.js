@@ -12,7 +12,6 @@ const nodeId = require('./nodeId');
  *     longName: string,
  *     shortName: string,
  *     lastSeen: number (epoch ms),
- *     isOnline: boolean,
  *     hopsAway: number (hops the last packet took, absent if unreported),
  *   }
  */
@@ -25,22 +24,6 @@ function upsert(id, info) {
     ...info,
     lastSeen: Date.now(),
   });
-}
-
-function setOnline(id, isOnline) {
-  const existing = cache.get(id);
-  if (existing) {
-    existing.isOnline = isOnline;
-    existing.lastSeen = Date.now();
-  } else {
-    // Node not yet known — create a minimal placeholder so we track state
-    cache.set(id, {
-      longName: nodeId.format(id),
-      shortName: '????',
-      lastSeen: Date.now(),
-      isOnline,
-    });
-  }
 }
 
 /**
@@ -81,7 +64,7 @@ function evictStale() {
  * Stale entries are evicted first so the list honours the TTL exactly rather
  * than trailing up to 10 minutes behind the periodic sweep below.
  *
- * @returns {Array<{ id: number, longName?: string, shortName?: string, lastSeen: number, isOnline?: boolean }>}
+ * @returns {Array<{ id: number, longName?: string, shortName?: string, lastSeen: number, hopsAway?: number }>}
  */
 function list() {
   evictStale();
@@ -93,4 +76,4 @@ function list() {
 // Evict stale entries every 10 minutes
 setInterval(evictStale, 10 * 60 * 1000).unref();
 
-module.exports = { upsert, setOnline, getDisplayName, getEntry, list };
+module.exports = { upsert, getDisplayName, getEntry, list };

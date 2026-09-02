@@ -5,7 +5,7 @@ A bidirectional Meshtastic ↔ Discord bridge over MQTT, written in Node.js and 
 **What it does:**
 - Forwards incoming Meshtastic text messages to mapped Discord channels
 - Sends messages typed in those Discord channels back out over the mesh via MQTT downlink
-- Posts inline node online/offline events in the relevant channel (can be suppressed)
+- Announces nodes newly heard on the mesh in the relevant channel (can be suppressed)
 - Lists recently heard nodes on demand with a `/nodes` slash command
 
 ---
@@ -188,9 +188,11 @@ Nodes are usually seen via a position or telemetry packet before their `nodeinfo
 arrives, and those carry no names — until one does, a node is shown by the hex ID
 Meshtastic displays (`!a1b2c3d4`) rather than a name.
 
-Node online events are posted inline as: `🟢 **SHRT · Long Name** is now on the mesh`
+The first time a node is heard from, it's announced inline as:
+`🟢 **SHRT · Long Name** is now on the mesh`
 
-On a busy mesh these can outnumber the actual conversation, so set
+On a busy mesh these can outnumber the actual conversation, and the cache is
+empty on startup so a restart re-announces everything. Set
 `SUPPRESS_NODE_EVENTS=true` to drop them and bridge only real messages. The node
 cache still tracks everything either way, so `/nodes` keeps working as normal.
 
@@ -377,6 +379,6 @@ docker compose logs -f | npx pino-pretty
 | `GATEWAY_NODE_ID` | | auto-discovered | Gateway node ID as hex (`!a1b2c3d4`) or decimal, for echo prevention + downlink |
 | `CHANNEL_MAP` | ✅ | — | `MeshChannel:DiscordChannelId,...`, or `MeshChannel:ChannelIndex:DiscordChannelId,...` to pin indices |
 | `CONFIRM_SENDS` | | `false` | Echo each bridged message back into Discord, showing what actually reached the mesh |
-| `SUPPRESS_NODE_EVENTS` | | `false` | Don't post node join/leave notices into Discord |
+| `SUPPRESS_NODE_EVENTS` | | `false` | Don't post the 🟢 notice when a node is first heard |
 | `NODE_CACHE_TTL_MS` | | `3600000` | Node info cache TTL (ms) |
 | `LOG_LEVEL` | | `info` | `trace`, `debug`, `info`, `warn`, `error`, `fatal`, or `silent` |

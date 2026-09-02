@@ -17,18 +17,20 @@ function meshMessageToDiscord({ fromId, text }) {
 }
 
 /**
- * Format a node online/offline event for Discord.
+ * Format a node arriving on the mesh for Discord.
  *
- * Output:
- *   🟢 SHRT · Long Name is now on the mesh
- *   🔴 SHRT · Long Name left the mesh
+ * There's deliberately no departure counterpart: LoRa is connectionless
+ * broadcast, so a node that powers off or walks out of range simply stops
+ * transmitting — nothing announces it. The only leave signal Meshtastic offers
+ * is the MQTT last-will on msh/REGION/2/stat/!id, which covers only nodes
+ * holding their own broker connection (i.e. gateways), not the mesh nodes we
+ * report on here. Absence shows up instead as a node ageing out of /nodes.
+ *
+ * Output: "🟢 SHRT · Long Name is now on the mesh"
  */
 function nodeEventToDiscord({ type, displayName }) {
   if (type === 'online') {
     return `🟢 **${displayName}** is now on the mesh`;
-  }
-  if (type === 'offline') {
-    return `🔴 **${displayName}** left the mesh`;
   }
   return null;
 }

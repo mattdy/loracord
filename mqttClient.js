@@ -28,7 +28,7 @@ let onNodeEvent = null;
  *
  * @param {object} handlers
  * @param {function} handlers.onTextMessage  - called with { meshChannel, fromId, text }
- * @param {function} handlers.onNodeEvent    - called with { meshChannel, nodeId, type: 'online'|'offline'|'updated', displayName }
+ * @param {function} handlers.onNodeEvent    - called with { meshChannel, nodeId, type: 'online', displayName }
  */
 function connect(handlers) {
   onTextMessage = handlers.onTextMessage;
@@ -250,13 +250,12 @@ function handleMessage(topic, payload) {
   const hopsAway = extractHops(msg);
   const hops = hopsAway === null ? {} : { hopsAway };
 
-  // ── Node info — cache it and fire an "updated" event ─────────────────────
+  // ── Node info — cache it, announcing nodes we hadn't heard before ────────
   if (msgType === 'nodeinfo' && msg.payload) {
     const wasKnown = nodeCache.getEntry(fromId) !== null;
     nodeCache.upsert(fromId, {
       longName: msg.payload.longname || nodeId.format(fromId),
       shortName: msg.payload.shortname || '????',
-      isOnline: true,
       ...hops,
     });
 
@@ -286,7 +285,7 @@ function handleMessage(topic, payload) {
   // We track presence without emitting Discord events for every packet
   if (fromId && (msgType === 'position' || msgType === 'neighborinfo' || msgType === 'telemetry')) {
     const wasKnown = nodeCache.getEntry(fromId) !== null;
-    nodeCache.upsert(fromId, { isOnline: true, ...hops });
+    nodeCache.upsert(fromId, hops);
     if (!wasKnown) {
       onNodeEvent?.({
         meshChannel,

@@ -27,7 +27,7 @@ async function handleMeshTextMessage({ meshChannel, fromId, text }) {
 }
 
 /**
- * Called when a node comes online or goes offline.
+ * Called the first time a node is heard from.
  * Posted inline in the relevant channel, unless SUPPRESS_NODE_EVENTS is set.
  */
 async function handleNodeEvent({ meshChannel, nodeId, type, displayName }) {
